@@ -1,0 +1,944 @@
+{
+  "entities": {
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Trusted administrator role lookup document keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Non-PII operational account profile and synced wallet balances for a registered user.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "maxLength": 16
+        },
+        "balance": {
+          "type": "number"
+        },
+        "pendingEscrowBalance": {
+          "type": "number"
+        },
+        "coins": {
+          "type": "number"
+        },
+        "memberTier": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "isBlocked": {
+          "type": "boolean"
+        },
+        "blockReason": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "blockedAt": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "joinedDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "name",
+        "role",
+        "balance",
+        "pendingEscrowBalance",
+        "coins",
+        "memberTier",
+        "isBlocked",
+        "joinedDate",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivatePii": {
+      "title": "UserPrivatePii",
+      "description": "Strictly isolated PII contact record for a user (email and phone).",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "phone": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^[0-9+\\-]{0,20}$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "phone", "createdAt", "updatedAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Global reselling catalog product managed by Admin and synced live to all devices.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "titleEn": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "regularPrice": {
+          "type": "number"
+        },
+        "customerPrice": {
+          "type": "number"
+        },
+        "commission": {
+          "type": "number"
+        },
+        "deliveryChargeInside": {
+          "type": "number"
+        },
+        "deliveryChargeOutside": {
+          "type": "number"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180000
+        },
+        "rating": {
+          "type": "number"
+        },
+        "soldCount": {
+          "type": "number"
+        },
+        "stock": {
+          "type": "number"
+        },
+        "supplier": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "features": {
+          "type": "array"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["published", "archived"],
+          "maxLength": 20
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "titleEn",
+        "category",
+        "customerPrice",
+        "commission",
+        "deliveryChargeInside",
+        "deliveryChargeOutside",
+        "image",
+        "description",
+        "features",
+        "status",
+        "authorId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MicroJob": {
+      "title": "MicroJob",
+      "description": "Micro-job campaign posted by Admin or submitted by verified users for Admin approval.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "titleEn": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "category": {
+          "type": "string",
+          "enum": ["youtube", "facebook", "telegram", "app", "review"],
+          "maxLength": 24
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "reward": {
+          "type": "number"
+        },
+        "estimatedTime": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "completedSlots": {
+          "type": "number"
+        },
+        "totalSlots": {
+          "type": "number"
+        },
+        "instructions": {
+          "type": "array"
+        },
+        "proofPlaceholder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "targetUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "isUserGenerated": {
+          "type": "boolean"
+        },
+        "postedBy": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "senderPhone": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "paymentTrxId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "totalBudget": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "pending_admin_approval", "rejected"],
+          "maxLength": 32
+        },
+        "authorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "category",
+        "platform",
+        "reward",
+        "estimatedTime",
+        "completedSlots",
+        "totalSlots",
+        "instructions",
+        "proofPlaceholder",
+        "targetUrl",
+        "status",
+        "authorId",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Reselling customer order submitted by an authenticated reseller.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "productTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "productImage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180000
+        },
+        "customerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "customerPhone": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "customerAddress": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 400
+        },
+        "cityType": {
+          "type": "string",
+          "enum": ["inside_dhaka", "outside_dhaka"],
+          "maxLength": 24
+        },
+        "sellingPrice": {
+          "type": "number"
+        },
+        "commission": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending_courier", "shipped", "delivered_paid", "cancelled"],
+          "maxLength": 24
+        },
+        "escrowReleased": {
+          "type": "boolean"
+        },
+        "resellerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "productId",
+        "productTitle",
+        "productImage",
+        "customerName",
+        "customerPhone",
+        "customerAddress",
+        "cityType",
+        "sellingPrice",
+        "commission",
+        "status",
+        "escrowReleased",
+        "resellerName",
+        "date",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WithdrawalRequest": {
+      "title": "WithdrawalRequest",
+      "description": "Cashout request submitted by a verified user for bKash/Nagad payout.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "userPhone": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "method": {
+          "type": "string",
+          "enum": ["bKash Personal", "bKash", "Nagad", "Rocket", "Upay"],
+          "maxLength": 32
+        },
+        "accountType": {
+          "type": "string",
+          "enum": ["personal", "agent"],
+          "maxLength": 16
+        },
+        "accountNumber": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 20
+        },
+        "amount": {
+          "type": "number"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "maxLength": 20
+        },
+        "trxId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "rejectReason": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "userPhone",
+        "method",
+        "accountType",
+        "accountNumber",
+        "amount",
+        "date",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TaskProof": {
+      "title": "TaskProof",
+      "description": "Worker proof submission for a micro-job campaign.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "jobTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "workerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "workerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "workerPhone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "reward": {
+          "type": "number"
+        },
+        "proofText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "submittedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "jobId",
+        "jobTitle",
+        "workerId",
+        "workerName",
+        "workerPhone",
+        "reward",
+        "proofText",
+        "submittedAt",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "Support ticket, complaint, or blocked-account appeal submitted to Admin.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "userPhone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "withdrawal_issue",
+            "job_issue",
+            "reselling_help",
+            "suggestion",
+            "complaint",
+            "blocked_account_appeal",
+            "other"
+          ],
+          "maxLength": 32
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "resolved"],
+          "maxLength": 20
+        },
+        "adminReply": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "appealUserId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "userPhone",
+        "category",
+        "subject",
+        "message",
+        "date",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "User financial ledger entry for earnings, conversions, escrow, and withdrawals.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "resell_commission",
+            "micro_job",
+            "quiz_reward",
+            "referral",
+            "referral_bonus",
+            "withdrawal",
+            "withdrawal_refund",
+            "math_reward",
+            "captcha_reward",
+            "job_posting",
+            "spin_game",
+            "gift_code",
+            "gift",
+            "coin_reward",
+            "coin_convert",
+            "task_reward"
+          ],
+          "maxLength": 32
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "amount": {
+          "type": "number"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "pending", "processing", "rejected"],
+          "maxLength": 20
+        },
+        "method": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "account": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "trxId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "type",
+        "title",
+        "amount",
+        "date",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminSetting": {
+      "title": "AdminSetting",
+      "description": "Protected platform admin settings such as Master PIN configuration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "adminPin": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "adminPin", "updatedBy", "updatedAt"]
+    },
+    "GiftCode": {
+      "title": "GiftCode",
+      "description": "Dynamic promotional gift code managed by Admin with reward type, amount, and max usage limit.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "type": {
+          "type": "string",
+          "enum": ["coins", "balance"],
+          "maxLength": 16
+        },
+        "amount": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "maxUses": {
+          "type": "number"
+        },
+        "timesUsed": {
+          "type": "number"
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "code",
+        "type",
+        "amount",
+        "description",
+        "timesUsed",
+        "active",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "AdminRole",
+      "description": "Trusted admin UID registry."
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Registered user operational profile and synced coin/BDT wallet."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": "UserPrivatePii",
+      "description": "Isolated PII subcollection storing email and phone."
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Global reselling product catalog synced live across all devices."
+    },
+    "/jobs/{jobId}": {
+      "schema": "MicroJob",
+      "description": "Micro-job campaigns."
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Reseller dropshipping orders."
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": "WithdrawalRequest",
+      "description": "User cashout requests."
+    },
+    "/proofs/{proofId}": {
+      "schema": "TaskProof",
+      "description": "Worker micro-job proof submissions."
+    },
+    "/feedbacks/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Support tickets, complaints, and blocked-account appeals."
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Financial ledger entries per user."
+    },
+    "/settings/{settingId}": {
+      "schema": "AdminSetting",
+      "description": "Admin-only configuration settings."
+    },
+    "/gift_codes/{codeId}": {
+      "schema": "GiftCode",
+      "description": "Dynamic admin-managed promotional gift codes."
+    }
+  }
+}

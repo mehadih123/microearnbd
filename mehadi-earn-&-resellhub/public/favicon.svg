@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="me-bg" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="52%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#06b6d4" />
+    </linearGradient>
+    <linearGradient id="me-accent" x1="160" y1="120" x2="360" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="#d1fae5" />
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="116" fill="url(#me-bg)" />
+  <rect x="44" y="44" width="424" height="424" rx="98" stroke="#ffffff" stroke-opacity="0.22" stroke-width="8" />
+  <path
+    d="M128 348V172C128 156.536 140.536 144 156 144H174.6C184.5 144 193.6 149.2 198.7 157.7L256 253L313.3 157.7C318.4 149.2 327.5 144 337.4 144H356C371.464 144 384 156.536 384 172V348C384 361.255 373.255 372 360 372H344C330.745 372 320 361.255 320 348V242L277.6 310.6C267.7 326.6 244.3 326.6 234.4 310.6L192 242V348C192 361.255 181.255 372 168 372H152C138.745 372 128 361.255 128 348Z"
+    fill="url(#me-accent)"
+  />
+  <circle cx="384" cy="128" r="46" fill="#fbbf24" stroke="#ffffff" stroke-width="10" />
+  <path d="M384 104V152M368 124H400M374 114C374 114 380 110 388 112C395 113.8 396 122 384 126C372 130 373 140 384 142C393 143.6 398 139 398 139" stroke="#064e3b" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

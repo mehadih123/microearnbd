@@ -1,0 +1,820 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // GLOBAL PRIMITIVES & HARDENED HELPERS
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        (request.auth.token.firebase is map && request.auth.token.firebase.sign_in_provider == 'google.com')
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Zero-DB-read check for bootstrapped master admin (safe inside list and write rules)
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && (
+        request.auth.token.email == 'mdmehadih181@gmail.com' ||
+        request.auth.token.email.matches('(?i)^mdmehadih181@gmail\\.com$')
+      );
+    }
+
+    // Strict Admin check locked exclusively to verified bootstrapped admin email
+    function isAdmin() {
+      return isBootstrappedAdmin();
+    }
+
+    // =========================================================================
+    // ENTITY VALIDATION BLUEPRINTS
+    // =========================================================================
+    function isValidAdminRole(data) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 5 && data.email.size() <= 160
+        && data.createdAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+          'uid', 'name', 'role', 'balance', 'pendingEscrowBalance',
+          'coins', 'memberTier', 'isBlocked', 'joinedDate', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'name', 'role', 'balance', 'pendingEscrowBalance',
+          'coins', 'memberTier', 'isBlocked', 'blockReason', 'blockedAt',
+          'joinedDate', 'referralCode', 'referredBy', 'referralsCount', 'referralEarnings',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.role is string && data.role.size() <= 16 && data.role in ['user', 'admin']
+        && data.balance is number && data.balance >= 0 && data.balance <= 10000000
+        && data.pendingEscrowBalance is number && data.pendingEscrowBalance >= 0 && data.pendingEscrowBalance <= 10000000
+        && (data.coins is int || data.coins is number) && data.coins >= 0 && data.coins <= 100000000
+        && data.memberTier is string && data.memberTier.size() >= 1 && data.memberTier.size() <= 64
+        && data.isBlocked is bool
+        && (!('blockReason' in data) || (data.blockReason is string && data.blockReason.size() <= 300))
+        && (!('blockedAt' in data) || (data.blockedAt is string && data.blockedAt.size() <= 80))
+        && data.joinedDate is string && data.joinedDate.size() >= 1 && data.joinedDate.size() <= 80
+        && (!('referralCode' in data) || (data.referralCode is string && data.referralCode.size() <= 32))
+        && (!('referredBy' in data) || data.referredBy == null || (data.referredBy is string && data.referredBy.size() <= 64))
+        && (!('referralsCount' in data) || ((data.referralsCount is int || data.referralsCount is number) && data.referralsCount >= 0))
+        && (!('referralEarnings' in data) || (data.referralEarnings is number && data.referralEarnings >= 0))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivatePii(data) {
+      return data.keys().hasAll(['uid', 'email', 'phone', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'phone', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.phone is string && data.phone.size() <= 30
+        && (data.phone == '' || data.phone.matches('^[0-9+\\- ]+$'))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'id', 'title', 'titleEn', 'category', 'customerPrice', 'commission',
+          'deliveryChargeInside', 'deliveryChargeOutside', 'image', 'description',
+          'features', 'status', 'authorId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'titleEn', 'category', 'regularPrice', 'customerPrice',
+          'commission', 'deliveryChargeInside', 'deliveryChargeOutside', 'image',
+          'rating', 'soldCount', 'stock', 'supplier', 'description', 'features',
+          'status', 'authorId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 200
+        && data.titleEn is string && data.titleEn.size() >= 1 && data.titleEn.size() <= 200
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 64
+        && (!('regularPrice' in data) || (data.regularPrice is number && data.regularPrice >= 0 && data.regularPrice <= 10000000))
+        && data.customerPrice is number && data.customerPrice >= 1 && data.customerPrice <= 10000000
+        && data.commission is number && data.commission >= 0 && data.commission <= 1000000
+        && data.deliveryChargeInside is number && data.deliveryChargeInside >= 0 && data.deliveryChargeInside <= 10000
+        && data.deliveryChargeOutside is number && data.deliveryChargeOutside >= 0 && data.deliveryChargeOutside <= 10000
+        && data.image is string && data.image.size() >= 1 && data.image.size() <= 180000
+        && (!('rating' in data) || (data.rating is number && data.rating >= 0 && data.rating <= 5))
+        && (!('soldCount' in data) || (data.soldCount is int && data.soldCount >= 0 && data.soldCount <= 10000000))
+        && (!('stock' in data) || (data.stock is int && data.stock >= 0 && data.stock <= 1000000))
+        && (!('supplier' in data) || (data.supplier is string && data.supplier.size() <= 120))
+        && data.description is string && data.description.size() >= 1 && data.description.size() <= 2000
+        && data.features is list && data.features.size() <= 15
+        && (data.features.size() == 0 || (data.features[0] is string && data.features[0].size() <= 120))
+        && data.status is string && data.status.size() <= 20 && data.status in ['published', 'archived']
+        && isValidId(data.authorId)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMicroJob(data) {
+      return data.keys().hasAll([
+          'id', 'title', 'category', 'platform', 'reward', 'estimatedTime',
+          'completedSlots', 'totalSlots', 'instructions', 'proofPlaceholder',
+          'targetUrl', 'status', 'authorId', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'title', 'titleEn', 'category', 'platform', 'reward', 'estimatedTime',
+          'completedSlots', 'totalSlots', 'instructions', 'proofPlaceholder',
+          'targetUrl', 'isUserGenerated', 'postedBy', 'senderPhone', 'paymentTrxId',
+          'totalBudget', 'status', 'authorId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 240
+        && (!('titleEn' in data) || (data.titleEn is string && data.titleEn.size() <= 240))
+        && data.category is string && data.category.size() <= 24 && data.category in ['youtube', 'facebook', 'telegram', 'app', 'review']
+        && data.platform is string && data.platform.size() >= 1 && data.platform.size() <= 64
+        && data.reward is number && data.reward >= 1 && data.reward <= 100000
+        && data.estimatedTime is string && data.estimatedTime.size() >= 1 && data.estimatedTime.size() <= 64
+        && data.completedSlots is int && data.completedSlots >= 0 && data.completedSlots <= 1000000
+        && data.totalSlots is int && data.totalSlots >= 1 && data.totalSlots <= 1000000
+        && data.instructions is list && data.instructions.size() >= 1 && data.instructions.size() <= 10
+        && data.instructions[0] is string && data.instructions[0].size() <= 300
+        && data.proofPlaceholder is string && data.proofPlaceholder.size() >= 1 && data.proofPlaceholder.size() <= 240
+        && data.targetUrl is string && data.targetUrl.size() >= 1 && data.targetUrl.size() <= 500
+        && (!('isUserGenerated' in data) || data.isUserGenerated is bool)
+        && (!('postedBy' in data) || (data.postedBy is string && data.postedBy.size() <= 100))
+        && (!('senderPhone' in data) || (data.senderPhone is string && data.senderPhone.size() <= 20))
+        && (!('paymentTrxId' in data) || (data.paymentTrxId is string && data.paymentTrxId.size() <= 64))
+        && (!('totalBudget' in data) || (data.totalBudget is number && data.totalBudget >= 0 && data.totalBudget <= 10000000))
+        && data.status is string && data.status.size() <= 32 && data.status in ['active', 'pending_admin_approval', 'rejected']
+        && isValidId(data.authorId)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'productId', 'productTitle', 'productImage',
+          'customerName', 'customerPhone', 'customerAddress', 'cityType',
+          'sellingPrice', 'commission', 'status', 'escrowReleased',
+          'resellerName', 'date', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'productId', 'productTitle', 'productImage',
+          'customerName', 'customerPhone', 'customerAddress', 'cityType',
+          'sellingPrice', 'commission', 'status', 'escrowReleased',
+          'resellerName', 'date', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && isValidId(data.productId)
+        && data.productTitle is string && data.productTitle.size() >= 1 && data.productTitle.size() <= 300
+        && data.productImage is string && data.productImage.size() >= 1 && data.productImage.size() <= 180000
+        && data.customerName is string && data.customerName.size() >= 1 && data.customerName.size() <= 100
+        && data.customerPhone is string && data.customerPhone.size() >= 6 && data.customerPhone.size() <= 20
+        && data.customerAddress is string && data.customerAddress.size() >= 4 && data.customerAddress.size() <= 400
+        && data.cityType is string && data.cityType.size() <= 24 && data.cityType in ['inside_dhaka', 'outside_dhaka']
+        && data.sellingPrice is number && data.sellingPrice >= 1 && data.sellingPrice <= 10000000
+        && data.commission is number && data.commission >= 0 && data.commission <= 1000000
+        && data.status is string && data.status.size() <= 24 && data.status in ['pending_courier', 'shipped', 'delivered_paid', 'cancelled']
+        && data.escrowReleased is bool
+        && data.resellerName is string && data.resellerName.size() >= 1 && data.resellerName.size() <= 100
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWithdrawal(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'userPhone', 'method',
+          'accountType', 'accountNumber', 'amount', 'date', 'status',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'userName', 'userPhone', 'method',
+          'accountType', 'accountNumber', 'amount', 'date', 'status',
+          'trxId', 'rejectReason', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100
+        && data.userPhone is string && data.userPhone.size() >= 6 && data.userPhone.size() <= 20
+        && data.method is string && data.method.size() <= 32 && data.method in ['bKash Personal', 'bKash', 'Nagad', 'Rocket', 'Upay']
+        && data.accountType is string && data.accountType.size() <= 16 && data.accountType in ['personal', 'agent']
+        && data.accountNumber is string && data.accountNumber.size() >= 6 && data.accountNumber.size() <= 20
+        && data.amount is number && data.amount >= 100 && data.amount <= 500000
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 80
+        && data.status is string && data.status.size() <= 20 && data.status in ['pending', 'approved', 'rejected']
+        && (!('trxId' in data) || (data.trxId is string && data.trxId.size() <= 64))
+        && (!('rejectReason' in data) || (data.rejectReason is string && data.rejectReason.size() <= 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTaskProof(data) {
+      return data.keys().hasAll([
+          'id', 'jobId', 'jobTitle', 'workerId', 'workerName',
+          'workerPhone', 'reward', 'proofText', 'submittedAt',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'jobId', 'jobTitle', 'workerId', 'workerName',
+          'workerPhone', 'reward', 'proofText', 'submittedAt',
+          'status', 'archived', 'archivedAt', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.jobId)
+        && data.jobTitle is string && data.jobTitle.size() >= 1 && data.jobTitle.size() <= 240
+        && isValidId(data.workerId)
+        && data.workerName is string && data.workerName.size() >= 1 && data.workerName.size() <= 100
+        && data.workerPhone is string && data.workerPhone.size() >= 1 && data.workerPhone.size() <= 20
+        && data.reward is number && data.reward >= 1 && data.reward <= 100000
+        && data.proofText is string && data.proofText.size() >= 1 && data.proofText.size() <= 1000
+        && data.submittedAt is string && data.submittedAt.size() >= 1 && data.submittedAt.size() <= 80
+        && data.status is string && data.status.size() <= 20 && data.status in ['pending', 'approved', 'rejected']
+        && (!('archived' in data) || data.archived is bool)
+        && (!('archivedAt' in data) || (data.archivedAt is string && data.archivedAt.size() <= 80))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFeedback(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'userName', 'userPhone', 'category',
+          'subject', 'message', 'date', 'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'userName', 'userPhone', 'category',
+          'subject', 'message', 'date', 'status', 'adminReply',
+          'appealUserId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100
+        && data.userPhone is string && data.userPhone.size() >= 1 && data.userPhone.size() <= 100
+        && data.category is string && data.category.size() <= 32
+        && data.category in ['withdrawal_issue', 'job_issue', 'reselling_help', 'suggestion', 'complaint', 'blocked_account_appeal', 'other']
+        && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 200
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 2000
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 80
+        && data.status is string && data.status.size() <= 20 && data.status in ['pending', 'resolved']
+        && (!('adminReply' in data) || (data.adminReply is string && data.adminReply.size() <= 2000))
+        && (!('appealUserId' in data) || isValidId(data.appealUserId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data) {
+      return data.keys().hasAll([
+          'id', 'userId', 'type', 'title', 'amount', 'date',
+          'status', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'type', 'title', 'amount', 'date',
+          'status', 'method', 'account', 'trxId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && data.type is string && data.type.size() <= 32
+        && data.type in ['resell_commission', 'micro_job', 'quiz_reward', 'referral', 'referral_bonus', 'withdrawal', 'withdrawal_refund', 'math_reward', 'captcha_reward', 'job_posting', 'spin_game', 'gift_code', 'gift', 'coin_reward', 'coin_convert', 'task_reward']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 240
+        && data.amount is number && data.amount >= 0 && data.amount <= 10000000
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 80
+        && data.status is string && data.status.size() <= 20 && data.status in ['completed', 'pending', 'processing', 'rejected']
+        && (!('method' in data) || (data.method is string && data.method.size() <= 32))
+        && (!('account' in data) || (data.account is string && data.account.size() <= 32))
+        && (!('trxId' in data) || (data.trxId is string && data.trxId.size() <= 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGiftCode(data) {
+      return data.keys().hasAll(['id', 'code', 'type', 'amount', 'description', 'timesUsed', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'code', 'type', 'amount', 'description', 'maxUses', 'timesUsed', 'active', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.code is string && data.code.size() >= 2 && data.code.size() <= 32
+        && data.type is string && data.type in ['coins', 'balance']
+        && data.amount is number && data.amount >= 1 && data.amount <= 100000
+        && data.description is string && data.description.size() <= 240
+        && (!('maxUses' in data) || (data.maxUses is int && data.maxUses >= 1))
+        && data.timesUsed is int && data.timesUsed >= 0
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminSetting(data) {
+      return data.keys().hasAll(['id', 'adminPin', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'adminPin', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id)
+        && data.adminPin is string && data.adminPin.size() >= 4 && data.adminPin.size() <= 16
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // COLLECTION 1: /admins/{adminId}
+    // =========================================================================
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isSignedIn() && isBootstrappedAdmin();
+      allow create: if isVerifiedUser()
+        && isValidId(adminId)
+        && isValidAdminRole(incoming())
+        && incoming().uid == adminId
+        && incoming().createdAt == request.time
+        && isBootstrappedAdmin();
+      allow update: if false;
+      allow delete: if isVerifiedUser() && isValidId(adminId) && isBootstrappedAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 2: /users/{userId} & /users/{userId}/private/{docId}
+    // =========================================================================
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      
+      // Clean request-auth check for admin list queries; document scoped for standard users
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().uid == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == request.auth.uid
+        && (incoming().role == 'user' || (isBootstrappedAdmin() && incoming().role == 'admin'))
+        && incoming().balance == 0
+        && incoming().pendingEscrowBalance == 0
+        && incoming().coins <= 5000
+        && incoming().isBlocked == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/users/$(userId)/private/pii);
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().joinedDate == existing().joinedDate
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Admin Management Override (Block/Unblock, Escrow Release, Refund, Balance Adjust)
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'role', 'balance', 'pendingEscrowBalance', 'coins', 'memberTier',
+            'isBlocked', 'blockReason', 'blockedAt', 'updatedAt'
+          ]))
+          ||
+          // Action 2: Owner Task Coin Reward (+50 coins per Math / Quiz / Captcha)
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'updatedAt'])
+            && incoming().coins == existing().coins + 50)
+          ||
+          // Action 3: Owner Instant 1,000 Coins -> +1 BDT Conversion
+          (isOwner(userId) && existing().isBlocked == false && existing().coins >= 1000
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'balance', 'updatedAt'])
+            && incoming().coins == existing().coins - 1000
+            && incoming().balance == existing().balance + 1)
+          ||
+          // Action 4: Owner Resell Order Escrow Commission Accrual
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['pendingEscrowBalance', 'updatedAt'])
+            && incoming().pendingEscrowBalance > existing().pendingEscrowBalance
+            && incoming().pendingEscrowBalance <= existing().pendingEscrowBalance + 50000)
+          ||
+          // Action 5: Owner Withdrawal or Spin Purchase Balance Deduction
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'updatedAt'])
+            && incoming().balance < existing().balance
+            && incoming().balance >= 0)
+          ||
+          // Action 6: Owner Spin-to-Win Exact Prize Credit (+5, +10, +15, +20)
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'updatedAt'])
+            && (
+              incoming().balance == existing().balance + 5 ||
+              incoming().balance == existing().balance + 10 ||
+              incoming().balance == existing().balance + 15 ||
+              incoming().balance == existing().balance + 20
+            ))
+          ||
+          // Action 7: Owner Display Name Update
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'updatedAt']))
+          ||
+          // Action 8: Referral count increment / referral tracking
+          (isVerifiedUser() && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['referralsCount', 'updatedAt'])
+            && incoming().referralsCount >= existing().referralsCount)
+          ||
+          // Action 9: Owner Gift Code & Bonus Coin Credit (up to +100,000 coins)
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['coins', 'updatedAt'])
+            && incoming().coins > existing().coins
+            && incoming().coins <= existing().coins + 100000)
+          ||
+          // Action 10: Owner Gift Code Cash Balance Credit (up to +100,000 BDT)
+          (isOwner(userId) && existing().isBlocked == false
+            && incoming().diff(existing()).affectedKeys().hasOnly(['balance', 'updatedAt'])
+            && incoming().balance > existing().balance
+            && incoming().balance <= existing().balance + 100000)
+        );
+
+      // Allow verified owner to delete their own account (unless admin) or admin cleanup
+      allow delete: if isVerifiedUser() && (
+        (isOwner(userId) && existing().role != 'admin') ||
+        (isAdmin() && existing().role != 'admin' && existing().uid != request.auth.uid)
+      );
+
+      // Subcollection: Isolated Private PII
+      match /private/{docId} {
+        allow get: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(docId)
+          && docId == 'pii'
+          && (isOwner(userId) || isAdmin());
+
+        allow list: if false;
+
+        allow create: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(docId)
+          && docId == 'pii'
+          && isOwner(userId)
+          && isValidUserPrivatePii(incoming())
+          && incoming().uid == request.auth.uid
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(docId)
+          && docId == 'pii'
+          && isValidUserPrivatePii(incoming())
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'email', 'updatedAt'])
+          && (
+            isAdmin() ||
+            (isOwner(userId)
+              && get(/databases/$(database)/documents/users/$(userId)).data.isBlocked == false)
+          );
+
+        allow delete: if isVerifiedUser() && (isOwner(userId) || (isAdmin() && userId != request.auth.uid));
+      }
+    }
+
+    // =========================================================================
+    // COLLECTION 3: /products/{productId} (Global Live Storefront Catalog)
+    // =========================================================================
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (existing().status == 'published' || isAdmin());
+      allow list: if existing().status == 'published' || (isSignedIn() && isBootstrappedAdmin());
+
+      allow create: if isVerifiedUser()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().id == productId
+        && incoming().authorId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(productId)
+        && isValidProduct(incoming())
+        && incoming().id == existing().id
+        && incoming().authorId == existing().authorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'titleEn', 'category', 'regularPrice', 'customerPrice',
+          'commission', 'deliveryChargeInside', 'deliveryChargeOutside',
+          'image', 'rating', 'soldCount', 'stock', 'supplier',
+          'description', 'features', 'status', 'updatedAt'
+        ]);
+
+      allow delete: if isVerifiedUser() && isValidId(productId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 4: /jobs/{jobId} (Micro-Job Campaigns)
+    // =========================================================================
+    match /jobs/{jobId} {
+      allow get: if isValidId(jobId) && (
+        existing().status == 'active' ||
+        (isSignedIn() && existing().authorId == request.auth.uid) ||
+        isAdmin()
+      );
+      allow list: if existing().status == 'active' ||
+        (isSignedIn() && (
+          isBootstrappedAdmin() ||
+          existing().authorId == request.auth.uid
+        ));
+
+      allow create: if isVerifiedUser()
+        && isValidId(jobId)
+        && isValidMicroJob(incoming())
+        && incoming().id == jobId
+        && incoming().authorId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().status == 'pending_admin_approval'
+            && incoming().completedSlots == 0
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)))
+        );
+
+      allow update: if isVerifiedUser()
+        && isValidId(jobId)
+        && isValidMicroJob(incoming())
+        && (existing().status != 'rejected' || isAdmin())
+        && incoming().id == existing().id
+        && incoming().authorId == existing().authorId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'completedSlots', 'title', 'reward', 'totalSlots', 'updatedAt'
+        ]);
+
+      allow delete: if isVerifiedUser() && isValidId(jobId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 5: /orders/{orderId} (Reseller Orders & Escrow)
+    // =========================================================================
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && isValidId(orderId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().userId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().id == orderId
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending_courier'
+        && incoming().escrowReleased == false
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/products/$(incoming().productId));
+
+      allow update: if isVerifiedUser()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && (!(existing().status in ['delivered_paid', 'cancelled']) || isAdmin())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().productId == existing().productId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'escrowReleased', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 6: /withdrawals/{withdrawalId} (Cashout Requests)
+    // =========================================================================
+    match /withdrawals/{withdrawalId} {
+      allow get: if isSignedIn() && isValidId(withdrawalId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().userId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(withdrawalId)
+        && isValidWithdrawal(incoming())
+        && incoming().id == withdrawalId
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser()
+        && isValidId(withdrawalId)
+        && isValidWithdrawal(incoming())
+        && (existing().status == 'pending' || isAdmin())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().amount == existing().amount
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'trxId', 'rejectReason', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 7: /proofs/{proofId} (Worker Proof Submissions)
+    // =========================================================================
+    match /proofs/{proofId} {
+      allow get: if isSignedIn() && isValidId(proofId) && (existing().workerId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().workerId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(proofId)
+        && isValidTaskProof(incoming())
+        && incoming().id == proofId
+        && incoming().workerId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && exists(/databases/$(database)/documents/jobs/$(incoming().jobId));
+
+      allow update: if isVerifiedUser()
+        && isValidId(proofId)
+        && isValidTaskProof(incoming())
+        && (existing().status == 'pending' || isAdmin())
+        && incoming().id == existing().id
+        && incoming().workerId == existing().workerId
+        && incoming().jobId == existing().jobId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'archived', 'archivedAt', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 8: /feedbacks/{feedbackId} (Support & Appeals)
+    // =========================================================================
+    match /feedbacks/{feedbackId} {
+      allow get: if isSignedIn() && isValidId(feedbackId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().userId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming())
+        && incoming().id == feedbackId
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+
+      allow update: if isVerifiedUser()
+        && isValidId(feedbackId)
+        && isValidFeedback(incoming())
+        && (existing().status == 'pending' || isAdmin())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminReply', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 9: /transactions/{transactionId} (Financial Ledger)
+    // =========================================================================
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && isValidId(transactionId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (
+        isBootstrappedAdmin() ||
+        existing().userId == request.auth.uid
+      );
+
+      allow create: if isVerifiedUser()
+        && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && incoming().id == transactionId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (incoming().userId == request.auth.uid
+            && exists(/databases/$(database)/documents/users/$(request.auth.uid)))
+        );
+
+      allow update: if isVerifiedUser()
+        && isValidId(transactionId)
+        && isValidTransaction(incoming())
+        && (existing().status in ['pending', 'processing'] || isAdmin())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'trxId', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 10: /settings/{settingId} (Protected Admin Settings)
+    // =========================================================================
+    match /settings/{settingId} {
+      allow get: if isSignedIn() && isValidId(settingId) && isAdmin();
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(settingId)
+        && isValidAdminSetting(incoming())
+        && incoming().id == settingId
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(settingId)
+        && isValidAdminSetting(incoming())
+        && incoming().id == existing().id
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['adminPin', 'updatedBy', 'updatedAt']);
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 11: /gift_codes/{codeId} (Dynamic Admin-Managed Promo Gift Codes)
+    // =========================================================================
+    match /gift_codes/{codeId} {
+      allow get: if isSignedIn() && isValidId(codeId);
+      allow list: if isSignedIn() && (isBootstrappedAdmin() || isAdmin());
+      allow create: if isVerifiedUser()
+        && isValidId(codeId)
+        && isValidGiftCode(incoming())
+        && incoming().id == codeId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(codeId)
+        && isValidGiftCode(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Admin full update
+          isAdmin() ||
+          // User redemption increment & auto-deactivation when usage limit is reached
+          (existing().active == true
+            && incoming().code == existing().code
+            && incoming().type == existing().type
+            && incoming().amount == existing().amount
+            && incoming().description == existing().description
+            && (!('maxUses' in existing()) || existing().timesUsed < existing().maxUses)
+            && incoming().diff(existing()).affectedKeys().hasOnly(['timesUsed', 'active', 'updatedAt'])
+            && incoming().timesUsed == existing().timesUsed + 1
+            && (
+              (('maxUses' in existing()) && existing().timesUsed + 1 >= existing().maxUses)
+                ? incoming().active == false
+                : incoming().active == true
+            ))
+        );
+
+      allow delete: if isVerifiedUser() && isValidId(codeId) && isAdmin();
+    }
+  }
+}

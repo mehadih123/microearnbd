@@ -16,7 +16,8 @@ import {
   PlusCircle,
   AlertCircle
 } from 'lucide-react';
-import { MicroJob, Language } from '../types';
+import { MicroJob, Language, AdsConfig } from '../types';
+import { sanitizeExternalHttpUrl } from '../firebase';
 import { playSound } from '../utils/audio';
 
 interface MicroJobsSectionProps {
@@ -26,6 +27,7 @@ interface MicroJobsSectionProps {
   onShowToast: (msg: string) => void;
   language: Language;
   onClose?: () => void;
+  adsConfig?: AdsConfig;
 }
 
 export const MicroJobsSection: React.FC<MicroJobsSectionProps> = ({
@@ -34,9 +36,14 @@ export const MicroJobsSection: React.FC<MicroJobsSectionProps> = ({
   onOpenCreateJob,
   onShowToast,
   language,
-  onClose
+  onClose,
+  adsConfig
 }) => {
   const isBn = language === 'bn';
+  const activeSmartLinkUrl =
+    adsConfig?.adsEnabled && adsConfig?.smartLinkEnabled
+      ? sanitizeExternalHttpUrl(adsConfig.smartLinkUrl)
+      : '';
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [activeJob, setActiveJob] = useState<MicroJob | null>(null);
   const [proofText, setProofText] = useState('');
@@ -312,6 +319,32 @@ export const MicroJobsSection: React.FC<MicroJobsSectionProps> = ({
           })}
         </div>
       )}
+
+        {/* POLICY-SAFE SPONSORED SMART LINK SLOT (Below Micro-Jobs list) */}
+        {activeSmartLinkUrl && (
+          <div className="mt-6 p-4 rounded-2xl border border-amber-300/80 dark:border-amber-700/60 bg-white/90 dark:bg-slate-900/80 space-y-2.5 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                {isBn ? 'Sponsored / বিজ্ঞাপন' : 'Sponsored / Advertisement'}
+              </span>
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {isBn ? 'পার্টনার লিংক' : 'Partner Offer'}
+              </span>
+            </div>
+            <a
+              href={activeSmartLinkUrl}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              onClick={() => playSound('click')}
+              className="w-full min-h-[44px] px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs sm:text-sm shadow-sm flex items-center justify-between gap-2 transition-all cursor-pointer"
+            >
+              <span className="truncate">
+                {isBn ? 'স্পন্সরড পার্টনার ভিজিট (Explore Partner Offer)' : 'Explore Sponsored Partner Offer'}
+              </span>
+              <ExternalLink className="w-4 h-4 shrink-0" />
+            </a>
+          </div>
+        )}
 
         {/* Task Modal */}
         {activeJob && (

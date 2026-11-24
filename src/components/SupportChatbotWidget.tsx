@@ -1,23 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  MessageCircle,
   Send,
   Trash2,
-  ShieldCheck,
-  Briefcase,
-  Coins,
-  Lock,
   AlertCircle,
-  Bot,
-  User as UserIcon,
   Square,
   Paperclip,
+  Camera,
   FileText,
   Copy,
   Check,
   X,
   ImagePlus,
-  Code2
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { AppTab, Language, UserAccount } from '../types';
 import { playSound } from '../utils/audio';
@@ -150,7 +145,7 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
   return tokens.map((token, idx) => {
     if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
       return (
-        <strong key={idx} className="font-bold text-slate-900 dark:text-white">
+        <strong key={idx} className="font-semibold text-slate-950 dark:text-white">
           {token.slice(2, -2)}
         </strong>
       );
@@ -159,7 +154,7 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
       return (
         <code
           key={idx}
-          className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-800 font-mono text-[13px] text-emerald-700 dark:text-emerald-300"
+          className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 font-mono text-[14px] text-blue-700 dark:text-sky-300"
         >
           {token.slice(1, -1)}
         </code>
@@ -184,15 +179,15 @@ function CodeBlock({ languageLabel, code, isBn }: { languageLabel: string; code:
   };
 
   return (
-    <div className="my-2.5 rounded-xl overflow-hidden border border-slate-300/80 dark:border-slate-700 bg-slate-950 text-slate-100 shadow-sm">
-      <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 flex items-center justify-between gap-2 text-xs">
-        <span className="font-mono font-bold uppercase tracking-wider text-emerald-400">
+    <div className="my-3 rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800 bg-[#0d1117] text-slate-100 shadow-sm">
+      <div className="px-3.5 py-2 bg-[#161b22] border-b border-slate-800/90 flex items-center justify-between gap-2 text-xs">
+        <span className="font-mono font-medium tracking-wide text-slate-300">
           {languageLabel || 'code'}
         </span>
         <button
           type="button"
           onClick={() => void handleCopy()}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 font-medium transition-colors cursor-pointer"
         >
           {copied ? (
             <>
@@ -202,12 +197,12 @@ function CodeBlock({ languageLabel, code, isBn }: { languageLabel: string; code:
           ) : (
             <>
               <Copy className="w-3.5 h-3.5" />
-              <span>{isBn ? 'কোড কপি' : 'Copy Code'}</span>
+              <span>{isBn ? 'কোড কপি' : 'Copy'}</span>
             </>
           )}
         </button>
       </div>
-      <pre className="p-3 overflow-x-auto text-[13px] sm:text-sm leading-relaxed font-mono text-slate-100">
+      <pre className="p-3.5 overflow-x-auto text-[13px] leading-relaxed font-mono text-slate-100">
         <code>{code}</code>
       </pre>
     </div>
@@ -217,7 +212,7 @@ function CodeBlock({ languageLabel, code, isBn }: { languageLabel: string; code:
 function FormattedTextSegment({ text }: { text: string }) {
   const lines = text.split('\n');
   return (
-    <div className="space-y-2 leading-relaxed break-words">
+    <div className="space-y-3 leading-[1.75] break-words">
       {lines.map((line, i) => {
         const trimmed = line.trim();
         if (!trimmed) {
@@ -227,8 +222,8 @@ function FormattedTextSegment({ text }: { text: string }) {
         const bulletMatch = trimmed.match(/^([*\-•]|\d+\.)\s+(.*)$/);
         if (bulletMatch) {
           return (
-            <div key={i} className="flex items-start gap-2 pl-0.5">
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold shrink-0 select-none">
+            <div key={i} className="flex items-start gap-2.5 pl-0.5">
+              <span className="text-blue-600 dark:text-sky-400 font-semibold shrink-0 select-none mt-[1px]">
                 {bulletMatch[1] === '*' || bulletMatch[1] === '-' ? '•' : bulletMatch[1]}
               </span>
               <span className="min-w-0 flex-1">{renderInlineFormatting(bulletMatch[2])}</span>
@@ -239,7 +234,7 @@ function FormattedTextSegment({ text }: { text: string }) {
         const headingMatch = trimmed.match(/^#{1,3}\s+(.*)$/);
         if (headingMatch) {
           return (
-            <div key={i} className="font-extrabold text-base text-slate-900 dark:text-white pt-1">
+            <div key={i} className="font-semibold text-[16.5px] text-slate-950 dark:text-white pt-1.5">
               {renderInlineFormatting(headingMatch[1])}
             </div>
           );
@@ -253,14 +248,14 @@ function FormattedTextSegment({ text }: { text: string }) {
 
 function FormattedMessageBody({ text, isUser, isBn }: { text: string; isUser: boolean; isBn: boolean }) {
   if (isUser) {
-    return <p className="whitespace-pre-wrap break-words leading-relaxed">{text}</p>;
+    return <p className="whitespace-pre-wrap break-words leading-[1.68]">{text}</p>;
   }
 
   // Split by fenced code blocks ```lang ... ```
   const segments = text.split(/(```[\w-]*\n[\s\S]*?```)/g);
 
   return (
-    <div className="space-y-1.5 break-words">
+    <div className="space-y-2 break-words">
       {segments.map((segment, idx) => {
         if (!segment) return null;
         if (segment.startsWith('```') && segment.endsWith('```')) {
@@ -275,6 +270,36 @@ function FormattedMessageBody({ text, isUser, isBn }: { text: string; isUser: bo
       })}
     </div>
   );
+}
+
+function BrandMLogoMark({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg viewBox="96 112 320 288" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M128 348V172C128 156.536 140.536 144 156 144H174.6C184.5 144 193.6 149.2 198.7 157.7L256 253L313.3 157.7C318.4 149.2 327.5 144 337.4 144H356C371.464 144 384 156.536 384 172V348C384 361.255 373.255 372 360 372H344C330.745 372 320 361.255 320 348V242L277.6 310.6C267.7 326.6 244.3 326.6 234.4 310.6L192 242V348C192 361.255 181.255 372 168 372H152C138.745 372 128 361.255 128 348Z" />
+    </svg>
+  );
+}
+
+function cleanTextForSpeech(rawText: string): string {
+  return rawText
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^[*\-•]\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectSpeechLanguage(text: string, fallbackBn: boolean): 'bn-BD' | 'en-US' {
+  const bnMatches = text.match(/[\u0980-\u09FF]/g);
+  const enMatches = text.match(/[A-Za-z]/g);
+  const bnCount = bnMatches ? bnMatches.length : 0;
+  const enCount = enMatches ? enMatches.length : 0;
+  if (bnCount === 0 && enCount === 0) {
+    return fallbackBn ? 'bn-BD' : 'en-US';
+  }
+  return bnCount >= enCount || bnCount >= 12 ? 'bn-BD' : 'en-US';
 }
 
 export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
@@ -328,6 +353,10 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const [speechNotice, setSpeechNotice] = useState<{ msgId: string; text: string } | null>(null);
+  const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [cameraStreamError, setCameraStreamError] = useState<string | null>(null);
   const [lastFailedSubmission, setLastFailedSubmission] = useState<{
     text: string;
     attachments: ChatAttachment[];
@@ -337,6 +366,9 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Track mobile visualViewport so soft keyboard never hides header Close (×) or input bar
   const [mobileViewportStyle, setMobileViewportStyle] = useState<React.CSSProperties | undefined>(
@@ -349,11 +381,32 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
       document.body.classList.add('ai-chat-open');
     } else {
       document.body.classList.remove('ai-chat-open');
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      setSpeakingMsgId(null);
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
+      }
+      setCameraModalOpen(false);
     }
     return () => {
       document.body.classList.remove('ai-chat-open');
     };
   }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+        cameraStreamRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isOpen || typeof window === 'undefined') {
@@ -435,72 +488,6 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
       setTimeout(() => inputRef.current?.focus(), 120);
     }
   }, [isOpen]);
-
-  const quickPrompts = isBn
-    ? [
-        {
-          id: 'code_layout',
-          label: 'কোড, টেক্সট ও রেসপন্সিভ লেআউট তৈরি',
-          prompt: 'আমার প্ল্যাটফর্মের জন্য একটি ক্লিন ও রেসপন্সিভ React + Tailwind CSS প্রোডাক্ট বা টাস্ক কার্ড কম্পোনেন্টের কোড লিখে দিন।',
-          icon: Code2
-        },
-        {
-          id: 'withdraw',
-          label: 'উইথড্রয়াল নিয়ম ও বিকাশ ক্যাশআউট',
-          prompt: 'MicroEarn BD-তে টাকা তোলার সর্বনিম্ন সীমা, ফি এবং বিকাশ উইথড্রয়াল নিয়ম বিস্তারিত বলুন।',
-          icon: Coins
-        },
-        {
-          id: 'tasks',
-          label: 'কয়েন ও মাইক্রো-টাস্ক থেকে আয়',
-          prompt: 'ম্যাথ, কুইজ, ক্যাপচা এবং মাইক্রো-জব থেকে কীভাবে আয় হয় এবং কয়েন কনভার্টের নিয়ম কী?',
-          icon: ShieldCheck
-        },
-        {
-          id: 'business',
-          label: 'বাংলাদেশে অনলাইন ব্যবসার আইডিয়া',
-          prompt: 'বাংলাদেশে কম পুঁজিতে শুরু করা যায় এমন ৩টি বাস্তবসম্মত ও বৈধ অনলাইন ব্যবসা বা স্টার্টআপ মডেল সাজেস্ট করুন।',
-          icon: Briefcase
-        },
-        {
-          id: 'security',
-          label: 'অ্যাকাউন্ট সুরক্ষা ও স্ক্যাম প্রতিরোধ',
-          prompt: 'অনলাইন আর্নিংয়ে প্রতারণা বা ফেক পেমেন্ট স্ক্যাম থেকে বাঁচতে কী কী সতর্কতা মেনে চলা উচিত?',
-          icon: Lock
-        }
-      ]
-    : [
-        {
-          id: 'code_layout',
-          label: 'Generate Code, Text or UI Layout',
-          prompt: 'Create a clean, mobile-and-desktop responsive React + Tailwind CSS task card component with accessible typography.',
-          icon: Code2
-        },
-        {
-          id: 'withdraw',
-          label: 'Withdrawal Rules & Fees',
-          prompt: 'Explain the minimum withdrawal limit, fees, and bKash cashout verification steps on MicroEarn BD.',
-          icon: Coins
-        },
-        {
-          id: 'tasks',
-          label: 'Coins & Task Earnings',
-          prompt: 'How do Math, Quiz, Captcha, Micro-Jobs, and the 1,000 coins = ৳1 BDT conversion work?',
-          icon: ShieldCheck
-        },
-        {
-          id: 'business',
-          label: 'BD Business Ideas',
-          prompt: 'Suggest 3 practical, legal, low-investment online business or startup models suited for Bangladesh.',
-          icon: Briefcase
-        },
-        {
-          id: 'security',
-          label: 'Account & Scam Safety',
-          prompt: 'What security practices protect my MicroEarn BD account from phishing and fake payment scams?',
-          icon: Lock
-        }
-      ];
 
   const handleFilesSelected = async (fileList: FileList | File[] | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -606,9 +593,161 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
     setIsStreaming(false);
   };
 
+  const stopSpeech = () => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setSpeakingMsgId(null);
+  };
+
+  const stopCameraStream = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraModalOpen(false);
+    setCameraStreamError(null);
+  };
+
+  const handleOpenCameraCapture = async () => {
+    if (isStreaming || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MSG) return;
+    playSound('click');
+
+    const isMobileTouch =
+      typeof window !== 'undefined' &&
+      (window.matchMedia('(pointer: coarse)').matches ||
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
+
+    if (isMobileTouch || !navigator.mediaDevices?.getUserMedia) {
+      cameraInputRef.current?.click();
+      return;
+    }
+
+    setCameraStreamError(null);
+    setCameraModalOpen(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      });
+      cameraStreamRef.current = stream;
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          void videoRef.current.play().catch(() => {});
+        }
+      }, 40);
+    } catch {
+      setCameraStreamError(
+        isBn
+          ? 'ক্যামেরা অ্যাক্সেস পাওয়া যায়নি। চাইলে নিচের বাটন থেকে ছবি/ফাইল নির্বাচন করুন।'
+          : 'Camera permission unavailable. You can still pick a photo using the device picker below.'
+      );
+    }
+  };
+
+  const handleSnapWebcamPhoto = () => {
+    const videoEl = videoRef.current;
+    if (!videoEl || videoEl.videoWidth === 0 || videoEl.videoHeight === 0) return;
+
+    const canvas = document.createElement('canvas');
+    canvas.width = videoEl.videoWidth;
+    canvas.height = videoEl.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(
+      blob => {
+        if (!blob) return;
+        const capturedFile = new File([blob], `camera-photo-${Date.now()}.jpg`, {
+          type: 'image/jpeg'
+        });
+        stopCameraStream();
+        void handleFilesSelected([capturedFile]);
+      },
+      'image/jpeg',
+      0.9
+    );
+  };
+
+  const handleToggleSpeakMessage = (msgId: string, rawText: string) => {
+    playSound('click');
+    setSpeechNotice(null);
+
+    if (speakingMsgId === msgId) {
+      stopSpeech();
+      return;
+    }
+
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
+      setSpeechNotice({
+        msgId,
+        text: isBn
+          ? 'দুঃখিত, এই ব্রাউজারে অডিও রিডিং (Speech Synthesis) সাপোর্টেড নয়।'
+          : 'Sorry, voice playback is not supported in this browser.'
+      });
+      return;
+    }
+
+    const spokenText = cleanTextForSpeech(rawText);
+    if (!spokenText) return;
+
+    const targetLang = detectSpeechLanguage(spokenText, isBn);
+    const synth = window.speechSynthesis;
+    synth.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(spokenText);
+    utterance.lang = targetLang;
+    utterance.rate = 1;
+    utterance.pitch = 1;
+
+    const voices = synth.getVoices();
+    if (voices.length > 0) {
+      const langPrefix = targetLang.split('-')[0].toLowerCase();
+      const exactVoice = voices.find(v => v.lang.toLowerCase() === targetLang.toLowerCase());
+      const prefixVoice = voices.find(v => v.lang.toLowerCase().startsWith(langPrefix));
+      const chosenVoice = exactVoice || prefixVoice;
+
+      if (chosenVoice) {
+        utterance.voice = chosenVoice;
+      } else if (targetLang === 'bn-BD') {
+        setSpeechNotice({
+          msgId,
+          text: isBn
+            ? 'এই ডিভাইসে বাংলা ভয়েস প্যাক না থাকলে অডিও অস্পষ্ট হতে পারে বা নাও শোনা যেতে পারে।'
+            : 'A Bengali voice pack may not be installed on this device.'
+        });
+      }
+    }
+
+    utterance.onend = () => {
+      setSpeakingMsgId(prev => (prev === msgId ? null : prev));
+    };
+
+    utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
+      setSpeakingMsgId(prev => (prev === msgId ? null : prev));
+      if (event.error === 'interrupted' || event.error === 'canceled') return;
+      setSpeechNotice({
+        msgId,
+        text: isBn
+          ? 'এই ভাষার জন্য আপনার ডিভাইসে ভয়েস সাপোর্ট পাওয়া যায়নি।'
+          : 'Speech playback is not available for this language on your device.'
+      });
+    };
+
+    setSpeakingMsgId(msgId);
+    synth.speak(utterance);
+  };
+
   const handleClearChat = () => {
     playSound('click');
     stopGeneration();
+    stopSpeech();
+    setSpeechNotice(null);
     setLastFailedSubmission(null);
     setPendingAttachments([]);
     setAttachmentError(null);
@@ -773,10 +912,12 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                 setOpen(true);
               }}
               aria-label={isBn ? 'AI অ্যাসিস্ট্যান্ট চ্যাট খুলুন' : 'Open AI Assistant Chat'}
-              className="pointer-events-auto h-12 px-4 rounded-2xl bg-slate-900 hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500 text-white shadow-xl shadow-slate-900/20 dark:shadow-emerald-950/40 border border-slate-700/60 dark:border-emerald-400/40 flex items-center gap-2 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 active:scale-95"
+              className="pointer-events-auto h-12 pl-3.5 pr-4 rounded-full bg-white/95 hover:bg-white dark:bg-[#1b2230]/95 dark:hover:bg-[#232b3d] text-slate-900 dark:text-white shadow-[0_10px_30px_-6px_rgba(15,23,42,0.18)] dark:shadow-[0_10px_30px_-6px_rgba(0,0,0,0.55)] border border-slate-200/80 dark:border-slate-700/80 backdrop-blur-md flex items-center gap-2.5 cursor-pointer transition-all duration-200 hover:-translate-y-0.5 active:scale-95"
             >
-              <MessageCircle className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-bold whitespace-nowrap">
+              <span className="w-7 h-7 rounded-lg bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <BrandMLogoMark className="w-4 h-4" />
+              </span>
+              <span className="text-sm font-semibold tracking-tight whitespace-nowrap">
                 {isBn ? 'AI অ্যাসিস্ট্যান্ট' : 'AI Assistant'}
               </span>
             </button>
@@ -793,7 +934,7 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
             stopGeneration();
             setOpen(false);
           }}
-          className="fixed inset-0 z-[65] bg-slate-950/55 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[65] bg-slate-950/40 backdrop-blur-[3px] transition-opacity"
         />
       )}
 
@@ -814,39 +955,37 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
             setIsDragging(false);
             void handleFilesSelected(e.dataTransfer.files);
           }}
-          className={`fixed z-[70] inset-x-2.5 mx-auto top-[calc(env(safe-area-inset-top,0px)+0.75rem)] bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] w-[calc(100%-1.25rem)] max-w-[444px] sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:h-[min(640px,calc(100dvh-2rem-env(safe-area-inset-top,0px)))] bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border ${
+          className={`fixed z-[70] inset-x-2.5 mx-auto top-[calc(env(safe-area-inset-top,0px)+0.75rem)] bottom-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] w-[calc(100%-1.25rem)] max-w-[444px] sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:h-[min(650px,calc(100dvh-2rem-env(safe-area-inset-top,0px)))] bg-white dark:bg-[#131720] rounded-[28px] sm:rounded-[32px] border ${
             isDragging
-              ? 'border-emerald-500 ring-2 ring-emerald-500/40'
-              : 'border-slate-200 dark:border-slate-800'
-          } shadow-2xl flex flex-col overflow-hidden animate-in fade-in duration-200`}
+              ? 'border-blue-500 ring-2 ring-blue-500/30'
+              : 'border-slate-200/80 dark:border-slate-800/80'
+          } shadow-[0_24px_64px_-16px_rgba(15,23,42,0.2)] dark:shadow-[0_24px_64px_-16px_rgba(0,0,0,0.7)] flex flex-col overflow-hidden animate-in fade-in duration-200`}
         >
-          {/* Sticky Top Header — Close (×) button always visible & unobstructed */}
-          <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex items-center justify-between gap-2 shrink-0">
+          {/* Tidy Minimal Header — Generous touch targets & zero clutter */}
+          <header className="px-4 sm:px-5 py-3.5 border-b border-slate-100 dark:border-slate-800/70 bg-white/95 dark:bg-[#131720]/95 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-3 min-w-0 flex-1">
-              <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0">
-                <Bot className="w-5 h-5" />
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-500 text-white flex items-center justify-center shrink-0 shadow-xs">
+                <BrandMLogoMark className="w-5 h-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-extrabold text-base text-slate-900 dark:text-white truncate">
-                  {isBn ? 'MicroEarn BD AI অ্যাসিস্ট্যান্ট' : 'MicroEarn BD AI Assistant'}
+                <h3 className="font-semibold text-[15px] tracking-tight text-slate-900 dark:text-slate-50 truncate">
+                  {isBn ? 'MicroEarn BD AI সাপোর্ট' : 'MicroEarn BD AI'}
                 </h3>
-                <div className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 truncate">
-                  <span>{isBn ? 'কোড ও লেআউট' : 'Code & UI'}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{isBn ? 'বাংলা ও English' : 'Bangla & English'}</span>
-                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                  {isBn ? 'বাংলা ও English · তাৎক্ষণিক সহায়তা' : 'Bangla & English · Instant help'}
+                </p>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
                 onClick={handleClearChat}
-                className="w-11 h-11 rounded-xl sm:rounded-2xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
+                className="w-11 h-11 rounded-full text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-center cursor-pointer transition-colors"
                 aria-label={isBn ? 'চ্যাট হিস্ট্রি মুছুন' : 'Clear chat history'}
-                title={isBn ? 'চ্যাট পরিষ্কার করুন' : 'Clear History'}
+                title={isBn ? 'নতুন চ্যাট' : 'New chat'}
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-[18px] h-[18px]" />
               </button>
 
               <button
@@ -856,139 +995,172 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                   stopGeneration();
                   setOpen(false);
                 }}
-                className="w-11 h-11 rounded-xl sm:rounded-2xl bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white dark:bg-slate-800 dark:hover:bg-rose-600 dark:text-slate-100 border-2 border-rose-200 dark:border-slate-700 font-black text-2xl leading-none flex items-center justify-center transition-all cursor-pointer shadow-sm shrink-0"
+                className="w-11 h-11 rounded-full text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-slate-100 dark:hover:bg-slate-800/80 flex items-center justify-center cursor-pointer transition-colors"
                 aria-label={isBn ? 'চ্যাটবট বন্ধ করুন' : 'Close Support Chatbot'}
-                title={isBn ? 'বন্ধ করুন (×)' : 'Close (×)'}
+                title={isBn ? 'বন্ধ করুন' : 'Close'}
               >
-                &times;
+                <X className="w-5 h-5" />
               </button>
             </div>
-          </div>
-
-          {/* Privacy & Data Security Notice Strip (Zero Private Data Exposed to AI) */}
-          <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-800/80 bg-emerald-50/70 dark:bg-emerald-950/30 flex items-center justify-between gap-2 text-xs text-emerald-800 dark:text-emerald-300 shrink-0">
-            <span className="truncate font-semibold">
-              {isBn
-                ? '🔒 পাসওয়ার্ড, PIN বা ব্যক্তিগত তথ্য শেয়ার করবেন না · গোপনীয়তা সুরক্ষিত'
-                : '🔒 Never share passwords, PIN or private info · Privacy Protected'}
-            </span>
-          </div>
+          </header>
 
           {/* Drag Overlay */}
           {isDragging && (
-            <div className="px-4 py-2.5 bg-emerald-50 dark:bg-emerald-950/60 border-b border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-sm font-bold flex items-center justify-center gap-2 shrink-0">
+            <div className="px-4 py-3 bg-blue-50/90 dark:bg-sky-950/50 border-b border-blue-200/70 dark:border-sky-800/60 text-blue-700 dark:text-sky-300 text-sm font-medium flex items-center justify-center gap-2 shrink-0">
               <ImagePlus className="w-4 h-4" />
               <span>{isBn ? 'ছবি বা ডকুমেন্ট এখানে ছেড়ে দিন' : 'Drop images or documents here'}</span>
             </div>
           )}
 
-          {/* Message Feed */}
+          {/* Message Feed — Generous spacing, comfortable medium typography, open Gemini layout */}
           <div
             ref={scrollContainerRef}
-            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3.5 sm:px-4 py-3.5 sm:py-4 space-y-4 bg-white dark:bg-slate-950/60"
+            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-5 py-5 space-y-7 bg-white dark:bg-[#131720]"
           >
             {messages.map(msg => {
               const isUser = msg.role === 'user';
               const isCopied = copiedMsgId === msg.id;
+              const isSpeaking = speakingMsgId === msg.id;
+
+              if (isUser) {
+                return (
+                  <div key={msg.id} className="flex flex-col items-end gap-1.5">
+                    <div className="max-w-[85%] min-w-0 rounded-[22px] rounded-br-md px-4 py-3 bg-[#f0f4f9] dark:bg-[#232a3b] text-slate-900 dark:text-slate-100 text-[16px] leading-[1.68] shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="mb-2.5 flex flex-wrap gap-2">
+                          {msg.attachments.map(att =>
+                            att.previewUrl ? (
+                              <img
+                                key={att.id}
+                                src={att.previewUrl}
+                                alt={att.name}
+                                className="max-h-40 max-w-full rounded-2xl object-cover border border-slate-200/70 dark:border-slate-700"
+                              />
+                            ) : (
+                              <div
+                                key={att.id}
+                                className="px-3 py-1.5 rounded-xl bg-white/80 dark:bg-slate-800/90 text-xs font-medium flex items-center gap-1.5 max-w-full border border-slate-200/70 dark:border-slate-700"
+                              >
+                                <FileText className="w-4 h-4 shrink-0 text-blue-600 dark:text-sky-400" />
+                                <span className="truncate">{att.name}</span>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      )}
+
+                      <FormattedMessageBody text={msg.text} isUser={true} isBn={isBn} />
+                    </div>
+                    <span className="px-1 text-[11px] text-slate-400 dark:text-slate-500 tabular-nums">
+                      {msg.timestamp}
+                    </span>
+                  </div>
+                );
+              }
 
               return (
-                <div
-                  key={msg.id}
-                  className={`flex items-start gap-2.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}
-                >
+                <div key={msg.id} className="flex items-start gap-3">
                   <div
-                    className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
-                      isUser
-                        ? 'bg-slate-900 text-white dark:bg-slate-700'
-                        : msg.isError
-                          ? 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-400'
-                          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/80 dark:text-emerald-300'
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-1 ${
+                      msg.isError
+                        ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/70 dark:text-rose-400'
+                        : 'bg-gradient-to-tr from-emerald-600 via-teal-500 to-cyan-500 text-white shadow-xs'
                     }`}
                   >
-                    {isUser ? (
-                      <UserIcon className="w-4 h-4" />
-                    ) : msg.isError ? (
+                    {msg.isError ? (
                       <AlertCircle className="w-4 h-4" />
                     ) : (
-                      <Bot className="w-4 h-4" />
+                      <BrandMLogoMark className="w-4 h-4" />
                     )}
                   </div>
 
-                  <div
-                    className={`max-w-[85%] min-w-0 rounded-2xl px-4 py-3 text-[15px] sm:text-base leading-relaxed ${
-                      isUser
-                        ? 'bg-emerald-600 text-white'
-                        : msg.isError
-                          ? 'bg-rose-50 dark:bg-rose-950/30 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-800/60'
-                          : 'bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-200/80 dark:border-slate-800'
-                    }`}
-                  >
-                    {/* User Uploaded Attachments */}
-                    {msg.attachments && msg.attachments.length > 0 && (
-                      <div className="mb-2.5 flex flex-wrap gap-2">
-                        {msg.attachments.map(att =>
-                          att.previewUrl ? (
-                            <img
-                              key={att.id}
-                              src={att.previewUrl}
-                              alt={att.name}
-                              className="max-h-40 max-w-full rounded-xl object-cover border border-white/25"
-                            />
-                          ) : (
-                            <div
-                              key={att.id}
-                              className="px-2.5 py-1.5 rounded-xl bg-black/15 text-xs font-medium flex items-center gap-1.5 max-w-full"
-                            >
-                              <FileText className="w-4 h-4 shrink-0" />
-                              <span className="truncate">{att.name}</span>
-                            </div>
-                          )
-                        )}
-                      </div>
-                    )}
-
-                    {msg.text ? (
-                      <FormattedMessageBody text={msg.text} isUser={isUser} isBn={isBn} />
-                    ) : (
-                      <div className="flex items-center gap-1.5 py-1" aria-label="Typing">
-                        <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-bounce [animation-delay:-0.2s]" />
-                        <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-bounce [animation-delay:-0.1s]" />
-                        <span className="w-2 h-2 rounded-full bg-emerald-600 dark:bg-emerald-400 animate-bounce" />
-                        <span className="ml-1.5 text-sm text-slate-500 dark:text-slate-400">
-                          {isBn ? 'উত্তর লিখছে...' : 'Thinking...'}
-                        </span>
-                      </div>
-                    )}
-
+                  <div className="flex-1 min-w-0">
                     <div
-                      className={`mt-2 flex items-center justify-between gap-3 text-xs tabular-nums ${
-                        isUser ? 'text-emerald-100' : 'text-slate-400 dark:text-slate-500'
+                      className={`text-[16px] leading-[1.75] ${
+                        msg.isError
+                          ? 'rounded-2xl px-4 py-3 bg-rose-50/90 dark:bg-rose-950/30 text-rose-800 dark:text-rose-200 border border-rose-200/80 dark:border-rose-900/60'
+                          : 'text-slate-800 dark:text-slate-100 pt-0.5'
                       }`}
                     >
-                      <span>{msg.timestamp}</span>
-                      {!isUser && msg.text && !msg.isError && (
-                        <button
-                          type="button"
-                          onClick={() => void handleCopyMessage(msg.id, msg.text)}
-                          className="inline-flex items-center gap-1.5 hover:text-emerald-600 dark:hover:text-emerald-400 cursor-pointer transition-colors py-0.5 px-1.5 rounded"
-                          aria-label={isBn ? 'বার্তা কপি করুন' : 'Copy message'}
-                        >
-                          {isCopied ? (
-                            <>
-                              <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                              <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                                {isBn ? 'কপি হয়েছে' : 'Copied'}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="w-3.5 h-3.5" />
-                              <span>{isBn ? 'কপি' : 'Copy'}</span>
-                            </>
-                          )}
-                        </button>
+                      {msg.text ? (
+                        <FormattedMessageBody text={msg.text} isUser={false} isBn={isBn} />
+                      ) : (
+                        <div className="flex items-center gap-2 py-1 text-[15px] text-slate-500 dark:text-slate-400" aria-label="Typing">
+                          <span className="inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500/80 dark:bg-sky-400/80 animate-pulse" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-500/80 dark:bg-teal-400/80 animate-pulse [animation-delay:150ms]" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-500/80 dark:bg-emerald-400/80 animate-pulse [animation-delay:300ms]" />
+                          </span>
+                          <span>{isBn ? 'উত্তর তৈরি হচ্ছে...' : 'Thinking...'}</span>
+                        </div>
                       )}
                     </div>
+
+                    <div className="mt-2.5 flex items-center gap-2 flex-wrap text-xs text-slate-400 dark:text-slate-500 tabular-nums">
+                      <span>{msg.timestamp}</span>
+                      {msg.text && !msg.isError && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyMessage(msg.id, msg.text)}
+                            className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 cursor-pointer transition-colors py-1 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/70"
+                            aria-label={isBn ? 'বার্তা কপি করুন' : 'Copy message'}
+                          >
+                            {isCopied ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                                  {isBn ? 'কপি হয়েছে' : 'Copied'}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>{isBn ? 'কপি' : 'Copy'}</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleSpeakMessage(msg.id, msg.text)}
+                            className={`inline-flex items-center gap-1.5 cursor-pointer transition-colors py-1 px-2 rounded-lg ${
+                              isSpeaking
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 font-medium'
+                                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800/70'
+                            }`}
+                            aria-label={isSpeaking ? (isBn ? 'পড়া থামান' : 'Stop reading') : (isBn ? 'শুনে নিন' : 'Read aloud')}
+                            title={isSpeaking ? (isBn ? 'পড়া থামান' : 'Stop reading') : (isBn ? 'ভয়েসে শুনুন' : 'Listen')}
+                          >
+                            {isSpeaking ? (
+                              <>
+                                <VolumeX className="w-3.5 h-3.5 animate-pulse" />
+                                <span>{isBn ? 'থামান' : 'Stop'}</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-3.5 h-3.5" />
+                                <span>{isBn ? 'শুনুন' : 'Listen'}</span>
+                              </>
+                            )}
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {speechNotice?.msgId === msg.id && (
+                      <div className="mt-2 text-xs text-amber-700 dark:text-amber-300 bg-amber-50/90 dark:bg-amber-950/40 px-3 py-1.5 rounded-xl border border-amber-200/70 dark:border-amber-800/60 flex items-center justify-between gap-2">
+                        <span>{speechNotice.text}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSpeechNotice(null)}
+                          className="text-amber-600 dark:text-amber-400 hover:opacity-75 shrink-0 cursor-pointer"
+                          aria-label="Dismiss notice"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -996,50 +1168,25 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
 
             {/* Retry on Error */}
             {lastFailedSubmission && !isStreaming && (
-              <div className="flex justify-center">
+              <div className="flex justify-center pt-1">
                 <button
                   type="button"
                   onClick={() =>
                     void sendPrompt(lastFailedSubmission.text, lastFailedSubmission.attachments)
                   }
-                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white text-sm font-bold cursor-pointer transition-colors"
+                  className="px-4 py-2.5 rounded-full bg-slate-900 hover:bg-slate-800 dark:bg-slate-100 dark:hover:bg-white text-white dark:text-slate-900 text-xs font-semibold cursor-pointer transition-colors shadow-xs"
                 >
                   {isBn ? 'আবার চেষ্টা করুন' : 'Retry last message'}
                 </button>
-              </div>
-            )}
-
-            {/* Quick Starter Topic Buttons */}
-            {messages.length <= 1 && !isStreaming && (
-              <div className="pt-2 space-y-2.5">
-                <div className="text-xs font-bold text-slate-500 dark:text-slate-400">
-                  {isBn ? 'দ্রুত জিজ্ঞাসা করুন অথবা স্ক্রিনশট/কোড দিন:' : 'Quick prompts or attach a screenshot:'}
-                </div>
-                <div className="grid grid-cols-1 gap-2">
-                  {quickPrompts.map(item => {
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => void sendPrompt(item.prompt)}
-                        className="w-full text-left px-3.5 py-2.5 rounded-xl bg-slate-50 hover:bg-emerald-50 dark:bg-slate-900 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-800 hover:border-emerald-400 dark:hover:border-emerald-700 text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2.5 cursor-pointer transition-colors"
-                      >
-                        <Icon className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
             )}
           </div>
 
           {/* Pending Attachments Preview Bar */}
           {(pendingAttachments.length > 0 || attachmentError) && (
-            <div className="px-3 pt-2.5 pb-1.5 border-t border-slate-100 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/90 space-y-1.5 shrink-0">
+            <div className="px-4 pt-2.5 pb-1.5 border-t border-slate-100 dark:border-slate-800/70 bg-white dark:bg-[#131720] space-y-2 shrink-0">
               {attachmentError && (
-                <div className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold flex items-center gap-1.5">
+                <div className="text-xs text-rose-600 dark:text-rose-400 font-medium flex items-center gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                   <span>{attachmentError}</span>
                 </div>
@@ -1050,24 +1197,24 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                   {pendingAttachments.map(att => (
                     <div
                       key={att.id}
-                      className="relative group flex items-center gap-2 p-1.5 pr-7 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs max-w-[190px]"
+                      className="relative group flex items-center gap-2 p-1.5 pr-8 rounded-2xl bg-[#f0f4f9] dark:bg-[#1e2433] border border-slate-200/70 dark:border-slate-700/70 text-xs max-w-[196px]"
                     >
                       {att.previewUrl ? (
                         <img
                           src={att.previewUrl}
                           alt={att.name}
-                          className="w-9 h-9 rounded-lg object-cover shrink-0"
+                          className="w-9 h-9 rounded-xl object-cover shrink-0"
                         />
                       ) : (
-                        <div className="w-9 h-9 rounded-lg bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 flex items-center justify-center shrink-0">
+                        <div className="w-9 h-9 rounded-xl bg-blue-100 dark:bg-sky-950 text-blue-700 dark:text-sky-300 flex items-center justify-center shrink-0">
                           <FileText className="w-4 h-4" />
                         </div>
                       )}
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                        <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
                           {att.name}
                         </div>
-                        <div className="text-xs text-slate-400 tabular-nums">{att.sizeLabel}</div>
+                        <div className="text-[11px] text-slate-400 tabular-nums">{att.sizeLabel}</div>
                       </div>
                       <button
                         type="button"
@@ -1075,7 +1222,7 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                           setPendingAttachments(prev => prev.filter(p => p.id !== att.id))
                         }
                         aria-label={isBn ? 'ফাইল সরান' : 'Remove attachment'}
-                        className="absolute top-1 right-1 w-6 h-6 rounded-md bg-slate-100 hover:bg-rose-600 text-slate-600 hover:text-white dark:bg-slate-700 dark:text-slate-300 flex items-center justify-center cursor-pointer transition-colors"
+                        className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-white/90 hover:bg-rose-600 text-slate-500 hover:text-white dark:bg-slate-700 dark:text-slate-300 flex items-center justify-center cursor-pointer transition-colors shadow-xs"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1086,10 +1233,10 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
             </div>
           )}
 
-          {/* Multimodal Input Composer — Text-base prevents mobile auto-zoom and elevates comfort */}
+          {/* Sleek Gemini-Style Rounded Input Composer */}
           <form
             onSubmit={handleFormSubmit}
-            className="p-3 sm:p-3.5 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0"
+            className="px-3.5 sm:px-4 pt-2 pb-3 sm:pb-4 bg-white dark:bg-[#131720] shrink-0"
           >
             <input
               ref={fileInputRef}
@@ -1103,7 +1250,19 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
               }}
             />
 
-            <div className="flex items-end gap-2">
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={e => {
+                void handleFilesSelected(e.target.files);
+                e.target.value = '';
+              }}
+            />
+
+            <div className="flex items-end gap-1 rounded-[28px] bg-[#f0f4f9] dark:bg-[#1e2433] border border-slate-200/70 dark:border-slate-700/60 focus-within:bg-white dark:focus-within:bg-[#232a3b] focus-within:border-blue-400/70 dark:focus-within:border-sky-500/60 focus-within:shadow-[0_4px_20px_rgba(37,99,235,0.08)] p-1.5 transition-all duration-150">
               <button
                 type="button"
                 disabled={isStreaming || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MSG}
@@ -1113,9 +1272,20 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                 }}
                 aria-label={isBn ? 'ছবি বা ফাইল যুক্ত করুন' : 'Attach image or file'}
                 title={isBn ? 'স্ক্রিনশট, ছবি বা PDF যুক্ত করুন' : 'Attach screenshot, image, or PDF'}
-                className="w-11 h-11 rounded-xl bg-slate-100 hover:bg-emerald-50 dark:bg-slate-800 dark:hover:bg-emerald-950/60 text-slate-600 hover:text-emerald-700 dark:text-slate-300 dark:hover:text-emerald-300 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="w-10 h-10 min-w-[40px] min-h-[40px] rounded-full text-slate-500 hover:text-slate-900 hover:bg-slate-200/70 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-700/70 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
               >
-                <Paperclip className="w-4 h-4" />
+                <Paperclip className="w-[18px] h-[18px]" />
+              </button>
+
+              <button
+                type="button"
+                disabled={isStreaming || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MSG}
+                onClick={() => void handleOpenCameraCapture()}
+                aria-label={isBn ? 'ক্যামেরা দিয়ে নতুন ছবি তুলুন' : 'Take photo with camera'}
+                title={isBn ? 'ক্যামেরা দিয়ে ছবি তুলুন' : 'Take photo with camera'}
+                className="w-10 h-10 min-w-[40px] min-h-[40px] rounded-full text-slate-500 hover:text-emerald-700 hover:bg-emerald-100/70 dark:text-slate-400 dark:hover:text-emerald-300 dark:hover:bg-slate-700/70 flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-35 disabled:cursor-not-allowed transition-colors"
+              >
+                <Camera className="w-[18px] h-[18px]" />
               </button>
 
               <textarea
@@ -1126,17 +1296,17 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                   setInput(e.target.value);
                   const el = e.target;
                   el.style.height = 'auto';
-                  el.style.height = `${Math.min(el.scrollHeight, 108)}px`;
+                  el.style.height = `${Math.min(el.scrollHeight, 112)}px`;
                 }}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
                 maxLength={4000}
                 placeholder={
                   isBn
-                    ? 'প্রশ্ন, কোড, লেআউট অথবা স্ক্রিনশট দিন...'
-                    : 'Ask anything, generate code/UI, or attach screenshot...'
+                    ? 'প্রশ্ন, কোড বা স্ক্রিনশট দিন...'
+                    : 'Ask anything or attach a screenshot...'
                 }
-                className="flex-1 min-w-0 resize-none max-h-28 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-base text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-snug"
+                className="flex-1 min-w-0 resize-none max-h-28 bg-transparent border-0 px-2 py-2.5 text-[15.5px] text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-0 leading-snug"
               />
 
               {isStreaming ? (
@@ -1144,31 +1314,101 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
                   type="button"
                   onClick={stopGeneration}
                   aria-label={isBn ? 'উত্তর থামান' : 'Stop response'}
-                  className="w-11 h-11 rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+                  className="w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
                 >
-                  <Square className="w-4 h-4 fill-current" />
+                  <Square className="w-3.5 h-3.5 fill-current" />
                 </button>
               ) : (
                 <button
                   type="submit"
                   disabled={!input.trim() && pendingAttachments.length === 0}
                   aria-label={isBn ? 'পাঠান' : 'Send message'}
-                  className="w-11 h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-45 disabled:hover:bg-emerald-600 text-white flex items-center justify-center shrink-0 cursor-pointer disabled:cursor-not-allowed transition-colors"
+                  className="w-11 h-11 min-w-[44px] min-h-[44px] rounded-full bg-slate-900 hover:bg-slate-800 dark:bg-sky-500 dark:hover:bg-sky-400 text-white dark:text-slate-950 disabled:opacity-25 disabled:hover:bg-slate-900 dark:disabled:hover:bg-sky-500 flex items-center justify-center shrink-0 cursor-pointer disabled:cursor-not-allowed transition-colors"
                 >
                   <Send className="w-4 h-4" />
                 </button>
               )}
             </div>
 
-            <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500 flex items-center justify-between gap-2">
+            <div className="mt-2 px-2 text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-between gap-2">
               <span className="truncate">
                 {isBn
-                  ? 'PNG/JPG/PDF সাপোর্টেড · পাসওয়ার্ড বা পিন দিবেন না'
+                  ? 'PNG/JPG/PDF সাপোর্টেড · পাসওয়ার্ড বা PIN শেয়ার করবেন না'
                   : 'PNG/JPG/PDF supported · Never share password or PIN'}
               </span>
               <span className="tabular-nums shrink-0">{input.length}/4000</span>
             </div>
           </form>
+
+          {/* Desktop/Laptop Camera Stream Capture Overlay with Native File Fallback */}
+          {cameraModalOpen && (
+            <div className="absolute inset-0 z-30 bg-slate-950/90 backdrop-blur-sm flex flex-col justify-between p-4 text-white animate-in fade-in duration-150">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Camera className="w-4 h-4 text-emerald-400" />
+                  <span>{isBn ? 'ক্যামেরা দিয়ে ছবি তুলুন' : 'Take Photo with Camera'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={stopCameraStream}
+                  aria-label={isBn ? 'ক্যামেরা বন্ধ করুন' : 'Close camera'}
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center cursor-pointer transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 min-h-0 my-3 rounded-2xl overflow-hidden bg-slate-900 border border-slate-800 flex items-center justify-center">
+                {cameraStreamError ? (
+                  <div className="p-5 text-center space-y-3 text-sm text-slate-300">
+                    <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+                    <p className="leading-relaxed">{cameraStreamError}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopCameraStream();
+                        cameraInputRef.current?.click();
+                      }}
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold cursor-pointer transition-colors"
+                    >
+                      {isBn ? 'ডিভাইস থেকে ছবি বেছে নিন' : 'Choose from Device'}
+                    </button>
+                  </div>
+                ) : (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                )}
+              </div>
+
+              {!cameraStreamError && (
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      stopCameraStream();
+                      cameraInputRef.current?.click();
+                    }}
+                    className="px-4 py-2.5 rounded-full bg-white/10 hover:bg-white/20 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    {isBn ? 'ফাইল বাছুন' : 'Choose File'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSnapWebcamPhoto}
+                    className="px-6 py-2.5 rounded-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-sm font-bold flex items-center gap-2 cursor-pointer transition-colors shadow-lg"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>{isBn ? 'ছবি তুলুন' : 'Capture'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </aside>
       )}
     </>

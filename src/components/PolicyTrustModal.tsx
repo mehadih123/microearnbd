@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldCheck,
   FileText,
@@ -11,9 +11,13 @@ import {
   Cookie,
   CheckCircle2,
   Globe,
-  Clock
+  Clock,
+  MessageSquarePlus,
+  ChevronDown,
+  ChevronUp,
+  AlertCircle
 } from 'lucide-react';
-import { FeedbackItem, Language, UserAccount } from '../types';
+import { FeedbackItem, Language, SupportMessageItem, UserAccount } from '../types';
 import { playSound } from '../utils/audio';
 
 export type PolicyPageType = 'privacy' | 'terms' | 'contact';
@@ -24,6 +28,7 @@ interface PolicyTrustModalProps {
   onClose: () => void;
   currentUser: UserAccount | null;
   onSubmitFeedback: (feedback: FeedbackItem) => void;
+  onSubmitSupportMessage?: (message: SupportMessageItem) => Promise<void>;
   onShowToast: (msg: string) => void;
   language: Language;
 }
@@ -34,6 +39,7 @@ export const PolicyTrustModal: React.FC<PolicyTrustModalProps> = ({
   onClose,
   currentUser,
   onSubmitFeedback,
+  onSubmitSupportMessage,
   onShowToast,
   language
 }) => {
@@ -46,6 +52,12 @@ export const PolicyTrustModal: React.FC<PolicyTrustModalProps> = ({
   const [contactSubject, setContactSubject] = useState('');
   const [contactMessage, setContactMessage] = useState('');
   const [contactSubmitted, setContactSubmitted] = useState(false);
+  const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
+  const [supportSubmitError, setSupportSubmitError] = useState<string | null>(null);
+  const [showDirectForm, setShowDirectForm] = useState(false);
+
+  const directFormRef = useRef<HTMLDivElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (currentUser) {
@@ -56,44 +68,90 @@ export const PolicyTrustModal: React.FC<PolicyTrustModalProps> = ({
 
   if (!activePage) return null;
 
-  const handleContactFormSubmit = (e: React.FormEvent) => {
+  const handleOpenDirectSupportForm = () => {
+    playSound('click');
+    setShowDirectForm(true);
+    setSupportSubmitError(null);
+    setTimeout(() => {
+      directFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      nameInputRef.current?.focus();
+    }, 60);
+  };
+
+  const handleContactFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!contactName.trim() || !contactPhoneOrEmail.trim() || !contactMessage.trim()) {
+    setSupportSubmitError(null);
+
+    const trimmedName = contactName.trim();
+    const trimmedContact = contactPhoneOrEmail.trim();
+    const trimmedMessage = contactMessage.trim();
+
+    if (!trimmedName || trimmedContact.length < 3 || !trimmedMessage) {
       playSound('error');
-      onShowToast(
-        isBn
-          ? 'অনুগ্রহ করে নাম, যোগাযোগ মাধ্যম এবং বার্তা পূরণ করুন!'
-          : 'Please fill in your name, contact info, and message!'
-      );
+      const errMsg = isBn
+        ? 'অনুগ্রহ করে নাম, সঠিক মোবাইল/ইমেইল (কমপক্ষে ৩ অক্ষর) এবং বার্তা লিখুন!'
+        : 'Please fill in your name, valid phone/email, and message!';
+      setSupportSubmitError(errMsg);
+      onShowToast(errMsg);
       return;
     }
 
-    const newTicket: FeedbackItem = {
-      id: 'SUP-' + Math.floor(1000 + Math.random() * 9000),
-      userId: currentUser?.id || 'GUEST-VISITOR',
-      userName: contactName.trim(),
-      userPhone: contactPhoneOrEmail.trim(),
-      category: 'other',
-      subject:
-        contactSubject.trim() ||
-        (isBn ? 'যোগাযোগ ও সহায়তা বার্তা' : 'Contact & Support Inquiry'),
-      message: contactMessage.trim(),
-      date:
-        'আজ, ' +
-        new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' }),
-      status: 'pending'
-    };
+    const formattedDate =
+      'আজ, ' +
+      new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
+    const cleanSubject =
+      contactSubject.trim() ||
+      (isBn ? 'সরাসরি সাপোর্ট মেসেজ' : 'Direct Support Message');
 
-    playSound('success');
-    onSubmitFeedback(newTicket);
-    setContactSubmitted(true);
-    setContactSubject('');
-    setContactMessage('');
-    onShowToast(
-      isBn
-        ? 'আপনার বার্তা সফলভাবে অফিশিয়াল সাপোর্ট ইনবক্সে জমা হয়েছে!'
-        : 'Your inquiry has been sent to our official support team!'
-    );
+    setIsSubmittingSupport(true);
+    try {
+      if (onSubmitSupportMessage) {
+        const supportMsg: SupportMessageItem = {
+          id: 'MSG-' + Date.now().toString(36).toUpperCase() + '-' + Math.floor(100 + Math.random() * 900),
+          userId: currentUser?.id,
+          userName: trimmedName,
+          contact: trimmedContact,
+          subject: cleanSubject,
+          message: trimmedMessage,
+          status: 'new',
+          date: formattedDate,
+          createdAtMs: Date.now()
+        };
+        await onSubmitSupportMessage(supportMsg);
+      } else {
+        const newTicket: FeedbackItem = {
+          id: 'SUP-' + Math.floor(1000 + Math.random() * 9000),
+          userId: currentUser?.id || 'GUEST-VISITOR',
+          userName: trimmedName,
+          userPhone: trimmedContact,
+          category: 'other',
+          subject: cleanSubject,
+          message: trimmedMessage,
+          date: formattedDate,
+          status: 'pending'
+        };
+        onSubmitFeedback(newTicket);
+      }
+
+      playSound('success');
+      setContactSubmitted(true);
+      setContactSubject('');
+      setContactMessage('');
+      onShowToast(
+        isBn
+          ? 'আপনার বার্তা সফলভাবে অফিশিয়াল সাপোর্ট ইনবক্সে পাঠানো হয়েছে!'
+          : 'Your support message has been sent to the Admin inbox!'
+      );
+    } catch {
+      playSound('error');
+      const errText = isBn
+        ? 'মেসেজ পাঠাতে সমস্যা হয়েছে। ইন্টারনেট সংযোগ যাচাই করে আবার চেষ্টা করুন।'
+        : 'Failed to send your support message. Please check your connection and try again.';
+      setSupportSubmitError(errText);
+      onShowToast(errText);
+    } finally {
+      setIsSubmittingSupport(false);
+    }
   };
 
   return (
@@ -348,10 +406,10 @@ export const PolicyTrustModal: React.FC<PolicyTrustModalProps> = ({
           )}
 
           {/* ============================================================== */}
-          {/* PAGE 3: CONTACT US / SUPPORT (CHANNELS + DIRECT SUPPORT FORM)   */}
+          {/* PAGE 3: CONTACT US / SUPPORT (PROMINENT DIRECT FORM + CHANNELS) */}
           {/* ============================================================== */}
           {activePage === 'contact' && (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 pb-3 border-b border-slate-200 dark:border-slate-800">
                 <span>Official Helpdesk &amp; Verification Support</span>
                 <span aria-hidden="true">·</span>
@@ -361,174 +419,251 @@ export const PolicyTrustModal: React.FC<PolicyTrustModalProps> = ({
                 </span>
               </div>
 
-              {/* Official Support Channels Grid */}
-              <div className="grid grid-cols-1 gap-3">
-                <a
-                  href="https://t.me/MicroEarnBD"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => playSound('click')}
-                  className="p-4 rounded-2xl bg-slate-50 hover:bg-sky-50 dark:bg-slate-800/70 dark:hover:bg-sky-950/30 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-xl bg-sky-500 text-white flex items-center justify-center">
-                      <MessageCircle className="w-4 h-4" />
-                    </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                  </div>
+              {/* Prominent Top Action Bar Button for Direct Support Form */}
+              <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 dark:from-emerald-950/50 dark:via-teal-950/40 dark:to-slate-900 border-2 border-emerald-500/40 shadow-sm space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
-                      অফিসিয়াল টেলিগ্রাম
-                    </div>
-                    <div className="text-[11px] text-sky-600 dark:text-sky-400 font-mono mt-0.5">
-                      @MicroEarnBD
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                      তাৎক্ষণিক আপডেট ও কমিউনিটি সাপোর্ট
+                    <h3 className="text-sm font-black text-slate-900 dark:text-white">
+                      {isBn ? 'সরাসরি এডমিন সাপোর্ট ইনবক্স' : 'Direct Admin Support Inbox'}
+                    </h3>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">
+                      {isBn
+                        ? 'যেকোনো সমস্যা, পেআউট বা অ্যাকাউন্ট সহায়তার জন্য সরাসরি মেসেজ পাঠান।'
+                        : 'Send your inquiry directly to our support team without scrolling.'}
                     </p>
                   </div>
-                </a>
-
-                <a
-                  href="https://wa.me/8801312839525"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => playSound('click')}
-                  className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/70 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (showDirectForm) {
+                      playSound('click');
+                      setShowDirectForm(false);
+                    } else {
+                      handleOpenDirectSupportForm();
+                    }
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-between gap-2 cursor-pointer transition-all"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
-                      <Phone className="w-4 h-4" />
-                    </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                  </div>
-                  <div>
-                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
-                      হোয়াটসঅ্যাপ হেল্পলাইন
-                    </div>
-                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
-                      +880 1312-839525
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                      সরাসরি পেআউট ও রিসেলার সহায়তা
-                    </p>
-                  </div>
-                </a>
-
-                <a
-                  href="mailto:support@microearnbd.com"
-                  onClick={() => playSound('click')}
-                  className="p-4 rounded-2xl bg-slate-50 hover:bg-indigo-50 dark:bg-slate-800/70 dark:hover:bg-indigo-950/30 border border-slate-200 dark:border-slate-700 hover:border-indigo-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
-                      <Mail className="w-4 h-4" />
-                    </div>
-                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                  </div>
-                  <div>
-                    <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
-                      সাপোর্ট ইমেইল
-                    </div>
-                    <div className="text-[11px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5 break-all">
-                      support@microearnbd.com
-                    </div>
-                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                      অফিশিয়াল ও ব্যবসায়িক যোগাযোগ (১২-২৪ ঘণ্টা)
-                    </p>
-                  </div>
-                </a>
+                  <span className="flex items-center gap-2">
+                    <MessageSquarePlus className="w-4 h-4 shrink-0" />
+                    <span>
+                      {isBn
+                        ? 'সরাসরি সাপোর্ট মেসেজ / Direct Support Form'
+                        : 'Direct Support Form / Send Message'}
+                    </span>
+                  </span>
+                  {showDirectForm ? (
+                    <ChevronUp className="w-4 h-4 shrink-0" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 shrink-0" />
+                  )}
+                </button>
               </div>
 
-              {/* Direct Support Contact Form */}
-              <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-4">
-                <div>
-                  <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
-                    {isBn
-                      ? 'সরাসরি সাপোর্ট মেসেজ পাঠান (Direct Support Form)'
-                      : 'Send a Direct Support Message'}
-                  </h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                    {isBn
-                      ? 'আপনার যেকোনো প্রশ্ন, কারিগরি সমস্যা বা পেমেন্ট সংক্রান্ত জিজ্ঞাসা নিচে লিখে পাঠান।'
-                      : 'Submit your question or account inquiry directly to our support team.'}
-                  </p>
-                </div>
-
-                {contactSubmitted && (
-                  <div className="p-3.5 rounded-xl bg-emerald-100/80 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>
-                      ধন্যবাদ! আপনার বার্তাটি আমাদের অফিশিয়াল সাপোর্ট ইনবক্সে জমা হয়েছে। দ্রুত সমাধান দেওয়া হবে।
-                    </span>
+              {/* Direct Support Contact Form — Opens Prominently Right Below Top Action Button */}
+              {showDirectForm && (
+                <div
+                  ref={directFormRef}
+                  className="p-4 sm:p-5 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border-2 border-emerald-500/30 space-y-4 shadow-md animate-in fade-in duration-200"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
+                        {isBn
+                          ? 'সরাসরি সাপোর্ট মেসেজ পাঠান (Direct Support Form)'
+                          : 'Send a Direct Support Message'}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {isBn
+                          ? 'আপনার যেকোনো প্রশ্ন, কারিগরি সমস্যা বা পেমেন্ট সংক্রান্ত জিজ্ঞাসা নিচে লিখে পাঠান।'
+                          : 'Submit your question or account inquiry directly to our support team.'}
+                      </p>
+                    </div>
                   </div>
-                )}
 
-                <form onSubmit={handleContactFormSubmit} className="space-y-3">
-                  <div className="grid grid-cols-1 gap-3">
+                  {contactSubmitted && (
+                    <div className="p-3.5 rounded-xl bg-emerald-100/90 dark:bg-emerald-950/70 border border-emerald-400 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-start gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                      <span>
+                        {isBn
+                          ? 'ধন্যবাদ! আপনার বার্তাটি আমাদের অফিশিয়াল সাপোর্ট ইনবক্সে জমা হয়েছে। এডমিন টিম দ্রুত পর্যালোচনা করবে।'
+                          : 'Thank you! Your message has been saved to our Admin Support Inbox.'}
+                      </span>
+                    </div>
+                  )}
+
+                  {supportSubmitError && (
+                    <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{supportSubmitError}</span>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleContactFormSubmit} className="space-y-3">
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          {isBn ? 'আপনার পূর্ণ নাম *' : 'Your Full Name *'}
+                        </label>
+                        <input
+                          ref={nameInputRef}
+                          type="text"
+                          required
+                          value={contactName}
+                          onChange={e => setContactName(e.target.value)}
+                          placeholder={isBn ? 'আপনার নাম লিখুন' : 'Enter your name'}
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          {isBn ? 'মোবাইল নম্বর অথবা ইমেইল *' : 'Phone Number or Email *'}
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={contactPhoneOrEmail}
+                          onChange={e => setContactPhoneOrEmail(e.target.value)}
+                          placeholder="01XXXXXXXXX / email@gmail.com"
+                          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm font-mono outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        আপনার পূর্ণ নাম *
+                        {isBn ? 'বিষয়ের শিরোনাম (Subject)' : 'Subject'}
                       </label>
                       <input
                         type="text"
-                        required
-                        value={contactName}
-                        onChange={e => setContactName(e.target.value)}
-                        placeholder="আপনার নাম লিখুন"
+                        value={contactSubject}
+                        onChange={e => setContactSubject(e.target.value)}
+                        placeholder={
+                          isBn
+                            ? 'যেমন: অ্যাকাউন্ট সহায়তা / ক্যাশআউট তথ্য / ব্যবসায়িক যোগাযোগ'
+                            : 'e.g. Account Help / Payout Status / Inquiry'
+                        }
                         className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:border-emerald-500"
                       />
                     </div>
+
                     <div>
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                        মোবাইল নম্বর অথবা ইমেইল *
+                        {isBn ? 'আপনার বিস্তারিত বার্তা *' : 'Your Detailed Message *'}
                       </label>
-                      <input
-                        type="text"
+                      <textarea
                         required
-                        value={contactPhoneOrEmail}
-                        onChange={e => setContactPhoneOrEmail(e.target.value)}
-                        placeholder="01XXXXXXXXX / email@gmail.com"
-                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm font-mono outline-none focus:border-emerald-500"
+                        rows={4}
+                        value={contactMessage}
+                        onChange={e => setContactMessage(e.target.value)}
+                        placeholder={
+                          isBn
+                            ? 'আপনার প্রশ্ন বা সমস্যার বিবরণ স্পষ্টভাবে লিখুন...'
+                            : 'Write your question or issue clearly...'
+                        }
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:border-emerald-500 resize-none"
                       />
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      বিষয়ের শিরোনাম (Subject)
-                    </label>
-                    <input
-                      type="text"
-                      value={contactSubject}
-                      onChange={e => setContactSubject(e.target.value)}
-                      placeholder="যেমন: অ্যাকাউন্ট সহায়তা / ক্যাশআউট তথ্য / ব্যবসায়িক যোগাযোগ"
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:border-emerald-500"
-                    />
-                  </div>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingSupport}
+                      className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-60 text-white font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+                    >
+                      <Send className="w-4 h-4" />
+                      <span>
+                        {isSubmittingSupport
+                          ? (isBn ? 'পাঠানো হচ্ছে...' : 'Sending...')
+                          : (isBn ? 'সাপোর্টে বার্তা পাঠান' : 'Submit Support Request')}
+                      </span>
+                    </button>
+                  </form>
+                </div>
+              )}
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                      আপনার বিস্তারিত বার্তা *
-                    </label>
-                    <textarea
-                      required
-                      rows={4}
-                      value={contactMessage}
-                      onChange={e => setContactMessage(e.target.value)}
-                      placeholder="আপনার প্রশ্ন বা সমস্যার বিবরণ স্পষ্টভাবে লিখুন..."
-                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs sm:text-sm outline-none focus:border-emerald-500 resize-none"
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+              {/* Official Support Channels Grid */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                  {isBn ? 'অন্যান্য অফিসিয়াল যোগাযোগ মাধ্যম' : 'Other Official Support Channels'}
+                </div>
+                <div className="grid grid-cols-1 gap-3">
+                  <a
+                    href="https://t.me/MicroEarnBD"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => playSound('click')}
+                    className="p-4 rounded-2xl bg-slate-50 hover:bg-sky-50 dark:bg-slate-800/70 dark:hover:bg-sky-950/30 border border-slate-200 dark:border-slate-700 hover:border-sky-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
                   >
-                    <Send className="w-4 h-4" />
-                    <span>{isBn ? 'সাপোর্টে বার্তা পাঠান' : 'Submit Support Request'}</span>
-                  </button>
-                </form>
+                    <div className="flex items-center justify-between">
+                      <div className="w-9 h-9 rounded-xl bg-sky-500 text-white flex items-center justify-center">
+                        <MessageCircle className="w-4 h-4" />
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        অফিসিয়াল টেলিগ্রাম
+                      </div>
+                      <div className="text-[11px] text-sky-600 dark:text-sky-400 font-mono mt-0.5">
+                        @MicroEarnBD
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        তাৎক্ষণিক আপডেট ও কমিউনিটি সাপোর্ট
+                      </p>
+                    </div>
+                  </a>
+
+                  <a
+                    href="https://wa.me/8801312839525"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => playSound('click')}
+                    className="p-4 rounded-2xl bg-slate-50 hover:bg-emerald-50 dark:bg-slate-800/70 dark:hover:bg-emerald-950/30 border border-slate-200 dark:border-slate-700 hover:border-emerald-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-600 text-white flex items-center justify-center">
+                        <Phone className="w-4 h-4" />
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        হোয়াটসঅ্যাপ হেল্পলাইন
+                      </div>
+                      <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono mt-0.5">
+                        +880 1312-839525
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        সরাসরি পেআউট ও রিসেলার সহায়তা
+                      </p>
+                    </div>
+                  </a>
+
+                  <a
+                    href="mailto:support@microearnbd.com"
+                    onClick={() => playSound('click')}
+                    className="p-4 rounded-2xl bg-slate-50 hover:bg-indigo-50 dark:bg-slate-800/70 dark:hover:bg-indigo-950/30 border border-slate-200 dark:border-slate-700 hover:border-indigo-500 transition-all flex flex-col justify-between gap-3 cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
+                        <Mail className="w-4 h-4" />
+                      </div>
+                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                    </div>
+                    <div>
+                      <div className="font-extrabold text-xs sm:text-sm text-slate-900 dark:text-white">
+                        সাপোর্ট ইমেইল
+                      </div>
+                      <div className="text-[11px] text-indigo-600 dark:text-indigo-400 font-mono mt-0.5 break-all">
+                        support@microearnbd.com
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                        অফিশিয়াল ও ব্যবসায়িক যোগাযোগ (১২-২৪ ঘণ্টা)
+                      </p>
+                    </div>
+                  </a>
+                </div>
               </div>
             </div>
           )}

@@ -896,6 +896,124 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "SupportMessage": {
+      "title": "SupportMessage",
+      "description": "Direct contact & support messages submitted from the Contact & Support form.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "contact": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "status": {
+          "type": "string",
+          "enum": ["new", "read", "resolved"],
+          "maxLength": 16
+        },
+        "date": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userName",
+        "contact",
+        "subject",
+        "message",
+        "status",
+        "date",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdsConfig": {
+      "title": "AdsConfig",
+      "description": "Publicly readable and admin-managed dynamic ads configuration stored at siteSettings/adsConfig.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "adsEnabled": {
+          "type": "boolean"
+        },
+        "smartLinkEnabled": {
+          "type": "boolean"
+        },
+        "smartLinkUrl": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "bannerEnabled": {
+          "type": "boolean"
+        },
+        "bannerCode": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "adsEnabled",
+        "smartLinkEnabled",
+        "smartLinkUrl",
+        "bannerEnabled",
+        "bannerCode",
+        "updatedBy",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -946,6 +1064,14 @@
     "/gift_codes/{codeId}": {
       "schema": "GiftCode",
       "description": "Dynamic admin-managed promotional gift codes."
+    },
+    "/supportMessages/{messageId}": {
+      "schema": "SupportMessage",
+      "description": "Direct contact & support inbox messages for the Admin Panel."
+    },
+    "/siteSettings/{settingId}": {
+      "schema": "AdsConfig",
+      "description": "Dynamic ads and site configuration readable by all users and writable only by Admin."
     }
   }
 }

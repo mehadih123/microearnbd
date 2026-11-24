@@ -26,6 +26,7 @@ import {
   query,
   where,
   runTransaction,
+  onSnapshot,
   type DocumentReference,
   type DocumentData,
   type DocumentSnapshot
@@ -40,7 +41,9 @@ import {
   TaskProofSubmission,
   WithdrawalRequest,
   FeedbackItem,
-  GiftCode
+  SupportMessageItem,
+  GiftCode,
+  AdsConfig
 } from './types';
 
 // Initialize Firebase App, Firestore (with provisioned named database ID & long-polling resilience), and Auth
@@ -1370,5 +1373,163 @@ export async function redeemFirestoreGiftCode(
     }
     handleFirestoreError(err, OperationType.WRITE, `gift_codes/${cleanCode}`);
   }
+}
+
+// ============================================================================
+// DIRECT SUPPORT MESSAGES INBOX (CONTACT & SUPPORT FORM -> ADMIN INBOX)
+// ============================================================================
+export async function createFirestoreSupportMessage(msg: SupportMessageItem): Promise<void> {
+  const id = sanitizeId(msg.id);
+  const path = `supportMessages/${id}`;
+  const cleanContact = truncateStr(msg.contact, 120, 'N/A');
+  const payload: Record<string, unknown> = {
+    id,
+    userName: truncateStr(msg.userName, 100, 'ব্যবহারকারী'),
+    contact: cleanContact.length >= 3 ? cleanContact : 'N/A',
+    subject: truncateStr(msg.subject, 200, 'সরাসরি সাপোর্ট মেসেজ'),
+    message: truncateStr(msg.message, 2000, 'বার্তা'),
+    status: 'new',
+    date: truncateStr(msg.date, 80, 'আজ'),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  if (auth.currentUser?.uid) {
+    payload.userId = sanitizeId(auth.currentUser.uid);
+  }
+
+  try {
+    await setDoc(doc(db, 'supportMessages', id), payload);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function adminUpdateSupportMessageStatus(
+  messageId: string,
+  status: 'new' | 'read' | 'resolved'
+): Promise<void> {
+  assertAuthorizedAdmin();
+  const id = sanitizeId(messageId);
+  const path = `supportMessages/${id}`;
+  try {
+    await updateDoc(doc(db, 'supportMessages', id), {
+      status,
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function adminDeleteSupportMessage(messageId: string): Promise<void> {
+  assertAuthorizedAdmin();
+  const id = sanitizeId(messageId);
+  const path = `supportMessages/${id}`;
+  try {
+    await deleteDoc(doc(db, 'supportMessages', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+// ============================================================================
+// DYNAMIC ADS MANAGER CONFIGURATION (siteSettings/adsConfig)
+// ============================================================================
+export const DEFAULT_ADS_CONFIG: AdsConfig = {
+  adsEnabled: false,
+  smartLinkEnabled: false,
+  smartLinkUrl: '',
+  bannerEnabled: false,
+  bannerCode: ''
+};
+
+export function sanitizeExternalHttpUrl(rawUrl: string): string {
+  const trimmed = (rawUrl || '').trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return '';
+    }
+    return parsed.toString().slice(0, 1000);
+  } catch {
+    return '';
+  }
+}
+
+export async function saveAdsConfigToFirestore(config: AdsConfig): Promise<AdsConfig> {
+  const adminUser = assertAuthorizedAdmin();
+  const path = 'siteSettings/adsConfig';
+  const rawSmartUrl = (config.smartLinkUrl || '').trim();
+  let safeSmartUrl = '';
+
+  if (rawSmartUrl) {
+    safeSmartUrl = sanitizeExternalHttpUrl(rawSmartUrl);
+    if (!safeSmartUrl) {
+      throw new Error(
+        'অনুগ্রহ করে সঠিক Smart Link URL দিন (অবশ্যই http:// বা https:// দিয়ে শুরু হতে হবে)। / Please enter a valid http:// or https:// Smart Link URL.'
+      );
+    }
+  }
+
+  const cleanBannerCode = (config.bannerCode || '').trim().slice(0, 20000);
+
+  const payload = {
+    id: 'adsConfig',
+    adsEnabled: Boolean(config.adsEnabled),
+    smartLinkEnabled: Boolean(config.smartLinkEnabled),
+    smartLinkUrl: safeSmartUrl,
+    bannerEnabled: Boolean(config.bannerEnabled),
+    bannerCode: cleanBannerCode,
+    updatedBy: sanitizeId(adminUser.uid),
+    updatedAt: serverTimestamp()
+  };
+
+  try {
+    await setDoc(doc(db, 'siteSettings', 'adsConfig'), payload);
+    return {
+      adsEnabled: payload.adsEnabled,
+      smartLinkEnabled: payload.smartLinkEnabled,
+      smartLinkUrl: payload.smartLinkUrl,
+      bannerEnabled: payload.bannerEnabled,
+      bannerCode: payload.bannerCode,
+      updatedBy: payload.updatedBy,
+      updatedAtMs: Date.now()
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export function subscribeAdsConfig(onUpdate: (config: AdsConfig) => void): () => void {
+  const ref = doc(db, 'siteSettings', 'adsConfig');
+  return onSnapshot(
+    ref,
+    snap => {
+      if (!snap.exists()) {
+        onUpdate(DEFAULT_ADS_CONFIG);
+        return;
+      }
+      const data = snap.data();
+      const rawUrl = typeof data.smartLinkUrl === 'string' ? data.smartLinkUrl : '';
+      const updatedAtMs =
+        typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined;
+
+      onUpdate({
+        adsEnabled: Boolean(data.adsEnabled),
+        smartLinkEnabled: Boolean(data.smartLinkEnabled),
+        smartLinkUrl: sanitizeExternalHttpUrl(rawUrl),
+        bannerEnabled: Boolean(data.bannerEnabled),
+        bannerCode: typeof data.bannerCode === 'string' ? data.bannerCode.slice(0, 20000) : '',
+        updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+        updatedAtMs
+      });
+    },
+    err => {
+      console.warn('Ads config live listener notice:', err);
+      onUpdate(DEFAULT_ADS_CONFIG);
+    }
+  );
 }
 

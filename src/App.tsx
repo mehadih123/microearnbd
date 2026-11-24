@@ -66,10 +66,16 @@ import {
   adminArchiveFirestoreProof,
   createFirestoreFeedback,
   adminReplyFirestoreFeedback,
+  createFirestoreSupportMessage,
+  adminUpdateSupportMessageStatus,
+  adminDeleteSupportMessage,
   createFirestoreTransaction,
   getAdminPinFromFirestore,
   saveAdminPinToFirestore,
-  deleteCurrentUserAccount
+  deleteCurrentUserAccount,
+  DEFAULT_ADS_CONFIG,
+  subscribeAdsConfig,
+  saveAdsConfigToFirestore
 } from './firebase';
 
 import {
@@ -87,8 +93,10 @@ import {
   TaskProofSubmission,
   WithdrawalRequest,
   FeedbackItem,
+  SupportMessageItem,
   AppTab,
-  QuizQuestion
+  QuizQuestion,
+  AdsConfig
 } from './types';
 import { toggleMute, playSound } from './utils/audio';
 import { fetchQuizQuestions } from './utils/quizApi';
@@ -121,9 +129,11 @@ export default function App() {
   const [proofs, setProofs] = useState<TaskProofSubmission[]>([]);
   const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+  const [supportMessages, setSupportMessages] = useState<SupportMessageItem[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>(INITIAL_NOTIFICATIONS);
   const [adminPin, setAdminPin] = useState<string>('2026');
+  const [adsConfig, setAdsConfig] = useState<AdsConfig>(DEFAULT_ADS_CONFIG);
 
   // Live synced balances (guest session coins carry over on login/signup)
   const [balance, setBalance] = useState<number>(0);
@@ -272,9 +282,14 @@ export default function App() {
       }
     );
 
+    const unsubAds = subscribeAdsConfig(nextConfig => {
+      setAdsConfig(nextConfig);
+    });
+
     return () => {
       unsubProducts();
       unsubJobs();
+      unsubAds();
     };
   }, []);
 
@@ -589,6 +604,30 @@ export default function App() {
           collection(db, 'transactions'),
           snap => setTransactions(snap.docs.map(d => d.data() as Transaction)),
           err => handleFirestoreError(err, OperationType.LIST, 'transactions')
+        ),
+        onSnapshot(
+          collection(db, 'supportMessages'),
+          snap => {
+            const list: SupportMessageItem[] = snap.docs.map(d => {
+              const data = d.data();
+              const createdAtMs =
+                typeof data.createdAt?.toMillis === 'function' ? data.createdAt.toMillis() : 0;
+              return {
+                id: (data.id as string) || d.id,
+                userId: data.userId as string | undefined,
+                userName: (data.userName as string) || 'ব্যবহারকারী',
+                contact: (data.contact as string) || '',
+                subject: (data.subject as string) || 'সরাসরি সাপোর্ট মেসেজ',
+                message: (data.message as string) || '',
+                status: (data.status as SupportMessageItem['status']) || 'new',
+                date: (data.date as string) || 'আজ',
+                createdAtMs
+              };
+            });
+            list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+            setSupportMessages(list);
+          },
+          err => handleFirestoreError(err, OperationType.LIST, 'supportMessages')
         )
       );
     } else {
@@ -820,6 +859,16 @@ export default function App() {
     await saveAdminPinToFirestore(newPin);
     setAdminPin(newPin);
     showToast('মাস্টার পিন ক্লাউডে সংরক্ষিত হয়েছে!');
+  };
+
+  const handleSaveAdsConfig = async (nextConfig: AdsConfig) => {
+    const saved = await saveAdsConfigToFirestore(nextConfig);
+    setAdsConfig(saved);
+    showToast(
+      language === 'bn'
+        ? 'অ্যাড ম্যানেজমেন্ট সেটিংস লাইভ আপডেট হয়েছে!'
+        : 'Ads settings updated live!'
+    );
   };
 
   // PRODUCT MANAGEMENT (ADMIN -> LIVE FIRESTORE SYNC)
@@ -1143,6 +1192,29 @@ export default function App() {
     showToast('অভিযোগের জবাব প্রদান করা হয়েছে এবং বিষয়টি সমাধান হিসেবে চিহ্নিত হয়েছে!');
   };
 
+  const handleSubmitSupportMessage = async (msg: SupportMessageItem) => {
+    await createFirestoreSupportMessage(msg);
+  };
+
+  const handleUpdateSupportMessageStatus = async (
+    messageId: string,
+    status: SupportMessageItem['status']
+  ) => {
+    await adminUpdateSupportMessageStatus(messageId, status);
+    showToast(
+      status === 'resolved'
+        ? 'সাপোর্ট মেসেজটি সমাধানকৃত হিসেবে চিহ্নিত হয়েছে!'
+        : status === 'read'
+          ? 'মেসেজটি পঠিত হিসেবে চিহ্নিত হয়েছে।'
+          : 'মেসেজের স্ট্যাটাস আপডেট হয়েছে।'
+    );
+  };
+
+  const handleDeleteSupportMessage = async (messageId: string) => {
+    await adminDeleteSupportMessage(messageId);
+    showToast('সাপোর্ট মেসেজটি স্থায়ীভাবে ডিলিট করা হয়েছে।');
+  };
+
   // +50 COINS PER MATH / QUIZ / CAPTCHA & INSTANT 1,000 COINS -> ৳1.00 BDT CONVERSION
   const awardTaskCoins = async (coinsWon: number) => {
     if (auth.currentUser && currentUser) {
@@ -1318,6 +1390,7 @@ export default function App() {
               setAuthModalOpen(true);
             }}
             onShowToast={showToast}
+            adsConfig={adsConfig}
           />
         )}
 
@@ -1351,6 +1424,7 @@ export default function App() {
               onClose={() => handleSelectTab('home')}
               onShowToast={showToast}
               language={language}
+              adsConfig={adsConfig}
             />
           </div>
         )}
@@ -1386,13 +1460,15 @@ export default function App() {
 
       </main>
 
-      {/* Designated Non-Intrusive Adsterra Banner Container */}
-      <aside
-        aria-label="Advertisement"
-        className="relative z-0 max-w-5xl w-full mx-auto px-4 mt-4 mb-2"
-      >
-        <AdsterraBanner />
-      </aside>
+      {/* Designated Non-Intrusive Banner Container (Policy-Safe: renders ONLY when enabled & non-empty) */}
+      {adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim().length > 0 && (
+        <aside
+          aria-label="Advertisement"
+          className="relative z-0 max-w-5xl w-full mx-auto px-4 mt-4 mb-2"
+        >
+          <AdsterraBanner adsConfig={adsConfig} language={language} />
+        </aside>
+      )}
 
       {/* Footer */}
       <Footer
@@ -1569,12 +1645,17 @@ export default function App() {
           onArchiveProof={handleArchiveProof}
           feedbacks={feedbacks}
           onReplyFeedback={handleReplyFeedback}
+          supportMessages={supportMessages}
+          onUpdateSupportMessageStatus={handleUpdateSupportMessageStatus}
+          onDeleteSupportMessage={handleDeleteSupportMessage}
           products={products}
           onAddProduct={handleAddProduct}
           onUpdateProduct={handleUpdateProduct}
           onDeleteProduct={handleDeleteProduct}
           adminPin={adminPin}
           onUpdateAdminPin={handleUpdateMasterPin}
+          adsConfig={adsConfig}
+          onSaveAdsConfig={handleSaveAdsConfig}
           language={language}
         />
       )}
@@ -1602,6 +1683,7 @@ export default function App() {
           }}
           currentUser={currentUser}
           onSubmitFeedback={handleSubmitFeedback}
+          onSubmitSupportMessage={handleSubmitSupportMessage}
           onShowToast={showToast}
           language={language}
         />
@@ -1641,6 +1723,7 @@ export default function App() {
           coins={coins}
           currentUser={currentUser}
           onConvertCoins={handleConvertCoins}
+          onOpenPolicyPage={page => setPolicyModalPage(page)}
           onClose={() => {
             setProfileModalOpen(false);
             setActiveTab('home');

@@ -222,7 +222,9 @@ export function verifyRulesStaticAssertions(rulesPath = './firestore.rules'): bo
     'isValidWithdrawal(incoming())',
     'isValidTaskProof(incoming())',
     'isValidFeedback(incoming())',
-    'isValidTransaction(incoming())'
+    'isValidTransaction(incoming())',
+    'isValidSupportMessage(incoming())',
+    'isValidAdsConfig(incoming())'
   ];
   for (const guard of requiredGuards) {
     if (!rules.includes(guard)) {

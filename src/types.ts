@@ -165,6 +165,18 @@ export interface FeedbackItem {
   appealUserId?: string;
 }
 
+export interface SupportMessageItem {
+  id: string;
+  userId?: string;
+  userName: string;
+  contact: string;
+  subject: string;
+  message: string;
+  status: 'new' | 'read' | 'resolved';
+  date: string;
+  createdAtMs?: number;
+}
+
 export interface Order {
   id: string;
   productId: string;
@@ -190,3 +202,14 @@ export interface NotificationItem {
   type: 'earning' | 'job' | 'withdrawal' | 'info' | 'alert';
   read: boolean;
 }
+
+export interface AdsConfig {
+  adsEnabled: boolean;
+  smartLinkEnabled: boolean;
+  smartLinkUrl: string;
+  bannerEnabled: boolean;
+  bannerCode: string;
+  updatedAtMs?: number;
+  updatedBy?: string;
+}
+

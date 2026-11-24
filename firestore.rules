@@ -334,6 +334,47 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSupportMessage(data) {
+      return data.keys().hasAll([
+          'id', 'userName', 'contact', 'subject', 'message',
+          'status', 'date', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'userName', 'contact', 'subject', 'message',
+          'status', 'date', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && (!('userId' in data) || isValidId(data.userId))
+        && data.userName is string && data.userName.size() >= 1 && data.userName.size() <= 100
+        && data.contact is string && data.contact.size() >= 3 && data.contact.size() <= 120
+        && data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 200
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 2000
+        && data.status is string && data.status.size() <= 16 && data.status in ['new', 'read', 'resolved']
+        && data.date is string && data.date.size() >= 1 && data.date.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdsConfig(data) {
+      return data.keys().hasAll([
+          'id', 'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
+          'bannerEnabled', 'bannerCode', 'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
+          'bannerEnabled', 'bannerCode', 'updatedBy', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && data.adsEnabled is bool
+        && data.smartLinkEnabled is bool
+        && data.smartLinkUrl is string && data.smartLinkUrl.size() <= 1000
+        && (data.smartLinkUrl == '' || data.smartLinkUrl.matches('^https?://.*'))
+        && data.bannerEnabled is bool
+        && data.bannerCode is string && data.bannerCode.size() <= 20000
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // COLLECTION 1: /admins/{adminId}
     // =========================================================================
@@ -815,6 +856,68 @@ service cloud.firestore {
         );
 
       allow delete: if isVerifiedUser() && isValidId(codeId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 12: /supportMessages/{messageId} (Direct Support Inbox)
+    // =========================================================================
+    match /supportMessages/{messageId} {
+      allow get: if isSignedIn() && isValidId(messageId) && (
+        isAdmin() ||
+        ('userId' in existing() && existing().userId == request.auth.uid)
+      );
+      allow list: if isSignedIn() && isBootstrappedAdmin();
+
+      allow create: if isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().id == messageId
+        && incoming().status == 'new'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (!('userId' in incoming()) || (isSignedIn() && incoming().userId == request.auth.uid));
+
+      allow update: if isVerifiedUser()
+        && isValidId(messageId)
+        && isValidSupportMessage(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+
+      allow delete: if isVerifiedUser() && isValidId(messageId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 13: /siteSettings/{settingId} (Dynamic Ads Config)
+    // =========================================================================
+    match /siteSettings/{settingId} {
+      allow get: if isValidId(settingId) && (settingId == 'adsConfig' || isAdmin());
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(settingId)
+        && settingId == 'adsConfig'
+        && isValidAdsConfig(incoming())
+        && incoming().id == settingId
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin();
+
+      allow update: if isVerifiedUser()
+        && isValidId(settingId)
+        && settingId == 'adsConfig'
+        && isValidAdsConfig(incoming())
+        && incoming().id == existing().id
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
+          'bannerEnabled', 'bannerCode', 'updatedBy', 'updatedAt'
+        ]);
+
+      allow delete: if false;
     }
   }
 }

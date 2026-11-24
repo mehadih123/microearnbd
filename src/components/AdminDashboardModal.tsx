@@ -40,10 +40,14 @@ import {
   Wallet,
   CheckCheck,
   Gift,
-  Archive
+  Archive,
+  Megaphone,
+  Link2,
+  Code2,
+  ExternalLink
 } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, GiftCode } from '../types';
+import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, SupportMessageItem, GiftCode, AdsConfig } from '../types';
 import { playSound } from '../utils/audio';
 import {
   auth,
@@ -54,6 +58,9 @@ import {
   deleteFirestoreGiftCode,
   toggleFirestoreGiftCode,
   getAdminPinFromFirestore,
+  DEFAULT_ADS_CONFIG,
+  saveAdsConfigToFirestore,
+  sanitizeExternalHttpUrl,
   db
 } from '../firebase';
 
@@ -89,6 +96,10 @@ interface AdminDashboardModalProps {
   // Feedbacks & Complaints
   feedbacks: FeedbackItem[];
   onReplyFeedback: (feedbackId: string, reply: string) => void;
+  // Direct Support Messages Inbox
+  supportMessages?: SupportMessageItem[];
+  onUpdateSupportMessageStatus?: (messageId: string, status: SupportMessageItem['status']) => Promise<void> | void;
+  onDeleteSupportMessage?: (messageId: string) => Promise<void> | void;
   // Products Management
   products: Product[];
   onAddProduct: (product: Product) => Promise<void> | void;
@@ -96,6 +107,8 @@ interface AdminDashboardModalProps {
   onDeleteProduct: (productId: string) => Promise<void> | void;
   adminPin?: string;
   onUpdateAdminPin?: (newPin: string) => Promise<void> | void;
+  adsConfig?: AdsConfig;
+  onSaveAdsConfig?: (config: AdsConfig) => Promise<void> | void;
   language: Language;
 }
 
@@ -124,16 +137,85 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   onArchiveProof,
   feedbacks,
   onReplyFeedback,
+  supportMessages = [],
+  onUpdateSupportMessageStatus,
+  onDeleteSupportMessage,
   products,
   onAddProduct,
   onUpdateProduct,
   onDeleteProduct,
   adminPin = '2026',
   onUpdateAdminPin,
+  adsConfig = DEFAULT_ADS_CONFIG,
+  onSaveAdsConfig,
   language
 }) => {
   const isBn = language === 'bn';
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'active_users' | 'blocked_users' | 'appeals' | 'complaints' | 'withdrawals' | 'orders' | 'products' | 'jobs_proofs' | 'live_users' | 'gift_codes' | 'history_archive'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'active_users' | 'blocked_users' | 'appeals' | 'complaints' | 'support_messages' | 'ads_manager' | 'withdrawals' | 'orders' | 'products' | 'jobs_proofs' | 'live_users' | 'gift_codes' | 'history_archive'>('dashboard');
+
+  // Ads Manager (siteSettings/adsConfig) Form State
+  const [adsEnabledDraft, setAdsEnabledDraft] = useState<boolean>(adsConfig.adsEnabled);
+  const [smartLinkEnabledDraft, setSmartLinkEnabledDraft] = useState<boolean>(adsConfig.smartLinkEnabled);
+  const [smartLinkUrlDraft, setSmartLinkUrlDraft] = useState<string>(adsConfig.smartLinkUrl);
+  const [bannerEnabledDraft, setBannerEnabledDraft] = useState<boolean>(adsConfig.bannerEnabled);
+  const [bannerCodeDraft, setBannerCodeDraft] = useState<string>(adsConfig.bannerCode);
+  const [isSavingAds, setIsSavingAds] = useState<boolean>(false);
+  const [adsNotice, setAdsNotice] = useState<{ text: string; isError: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setAdsEnabledDraft(Boolean(adsConfig.adsEnabled));
+    setSmartLinkEnabledDraft(Boolean(adsConfig.smartLinkEnabled));
+    setSmartLinkUrlDraft(adsConfig.smartLinkUrl || '');
+    setBannerEnabledDraft(Boolean(adsConfig.bannerEnabled));
+    setBannerCodeDraft(adsConfig.bannerCode || '');
+  }, [isOpen, adsConfig]);
+
+  const handleSaveAdsSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAdsNotice(null);
+
+    const trimmedUrl = smartLinkUrlDraft.trim();
+    if (trimmedUrl && !sanitizeExternalHttpUrl(trimmedUrl)) {
+      playSound('error');
+      setAdsNotice({
+        text: 'সঠিক Smart Link URL দিন (অবশ্যই https:// বা http:// দিয়ে শুরু হতে হবে)। / Please enter a valid Smart Link URL starting with http:// or https://.',
+        isError: true
+      });
+      return;
+    }
+
+    const nextConfig: AdsConfig = {
+      adsEnabled: adsEnabledDraft,
+      smartLinkEnabled: smartLinkEnabledDraft,
+      smartLinkUrl: trimmedUrl,
+      bannerEnabled: bannerEnabledDraft,
+      bannerCode: bannerCodeDraft.trim()
+    };
+
+    setIsSavingAds(true);
+    try {
+      if (onSaveAdsConfig) {
+        await onSaveAdsConfig(nextConfig);
+      } else {
+        await saveAdsConfigToFirestore(nextConfig);
+      }
+      playSound('success');
+      setAdsNotice({
+        text: 'অ্যাড সেটিংস সফলভাবে Firebase-এ সেভ হয়েছে এবং লাইভ সাইটে আপডেট হয়েছে! / Ads settings saved to Firestore & updated live!',
+        isError: false
+      });
+    } catch (err: unknown) {
+      playSound('error');
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : 'অ্যাড সেটিংস সেভ করতে সমস্যা হয়েছে। আবার চেষ্টা করুন। / Failed to save ads settings.';
+      setAdsNotice({ text: message, isError: true });
+    } finally {
+      setIsSavingAds(false);
+    }
+  };
 
   // Dynamic Gift Codes Management State
   const [giftCodes, setGiftCodes] = useState<GiftCode[]>([]);
@@ -264,6 +346,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   // Feedback Reply state
   const [replyingFbId, setReplyingFbId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
+
+  // Direct Support Messages Inbox state
+  const [supportMsgFilter, setSupportMsgFilter] = useState<'all' | 'new' | 'read' | 'resolved'>('all');
+  const [updatingSupportMsgId, setUpdatingSupportMsgId] = useState<string | null>(null);
+  const [confirmDeleteSupportMsgId, setConfirmDeleteSupportMsgId] = useState<string | null>(null);
 
   // Direct Master PIN Change State (without insecure simulated OTP)
   const [showPinModal, setShowPinModal] = useState(false);
@@ -519,6 +606,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const resolvedAppeals = feedbacks.filter(f => f.category === 'blocked_account_appeal' && f.status === 'resolved');
   const pendingComplaints = feedbacks.filter(f => f.category !== 'blocked_account_appeal' && f.status !== 'resolved');
   const resolvedComplaints = feedbacks.filter(f => f.category !== 'blocked_account_appeal' && f.status === 'resolved');
+  const newSupportMessagesCount = supportMessages.filter(m => m.status === 'new').length;
   const totalArchivedCount = processedWithdrawals.length + archivedProofs.length + resolvedAppeals.length + resolvedComplaints.length;
 
   const totalPlatformBalance = users.reduce((acc, u) => acc + (u.balance || 0), 0);
@@ -917,7 +1005,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
                     মাস্টার কন্ট্রোল ও ব্যবস্থাপনা (Admin Management Actions)
                   </h4>
-                  <span className="text-[11px] text-purple-400 font-medium">১১টি প্রধান বিভাগ</span>
+                  <span className="text-[11px] text-purple-400 font-medium">১৩টি প্রধান বিভাগ</span>
                 </div>
 
                 <div className="flex flex-col w-full space-y-2.5">
@@ -1267,6 +1355,82 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         পিন বদলান
                       </span>
                       <span className="text-slate-500 group-hover:text-amber-400 text-lg transition-transform group-hover:translate-x-1">→</span>
+                    </div>
+                  </button>
+
+                  {/* 12. Direct Support Messages Inbox Card */}
+                  <button
+                    onClick={() => { playSound('click'); setActiveTab('support_messages'); }}
+                    className="w-full p-4 rounded-2xl bg-gradient-to-r from-emerald-950/50 via-slate-800/90 to-teal-950/40 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-all cursor-pointer group flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shadow-sm"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                        <Mail className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-sm sm:text-base text-white group-hover:text-emerald-300 transition-colors">
+                            ১২. সরাসরি সাপোর্ট মেসেজ (Support Messages)
+                          </h4>
+                          {newSupportMessagesCount > 0 && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500 text-slate-950 font-black animate-pulse">
+                              নতুন {newSupportMessagesCount} টি
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          যোগাযোগ ও সহায়তা ফর্ম থেকে আসা ইউজার মেসেজ পড়ুন, পঠিত/সমাধানকৃত চিহ্নিত করুন বা ডিলিট করুন
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-3 py-1 rounded-full bg-emerald-950 border border-emerald-700 text-emerald-300 text-xs font-bold font-mono">
+                        {supportMessages.length} টি মেসেজ
+                      </span>
+                      <span className="text-slate-500 group-hover:text-emerald-400 text-lg transition-transform group-hover:translate-x-1">→</span>
+                    </div>
+                  </button>
+
+                  {/* 13. Ads Manager Card */}
+                  <button
+                    onClick={() => {
+                      playSound('click');
+                      setAdsNotice(null);
+                      setActiveTab('ads_manager');
+                    }}
+                    className="w-full p-4 rounded-2xl bg-gradient-to-r from-violet-950/50 via-slate-800/90 to-fuchsia-950/40 hover:bg-slate-800 border border-violet-500/40 hover:border-violet-400 text-left transition-all cursor-pointer group flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shadow-sm"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-2xl bg-violet-500/20 border border-violet-500/50 text-violet-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                        <Megaphone className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-sm sm:text-base text-white group-hover:text-violet-300 transition-colors">
+                            ১৩. অ্যাড ম্যানেজমেন্ট (Ads Manager)
+                          </h4>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              adsConfig.adsEnabled
+                                ? 'bg-emerald-500 text-slate-950'
+                                : 'bg-slate-700 text-slate-300'
+                            }`}
+                          >
+                            {adsConfig.adsEnabled ? 'LIVE • চালু' : 'OFF • বন্ধ'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Smart Link, Native Banner ও HTML/Script অ্যাড কোড লাইভ কন্ট্রোল ও নিরাপদ প্লেসমেন্ট ম্যানেজ করুন
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-3 py-1 rounded-full bg-violet-950 border border-violet-700 text-violet-300 text-xs font-bold font-mono">
+                        {adsConfig.adsEnabled ? 'Active' : 'Disabled'}
+                      </span>
+                      <span className="text-slate-500 group-hover:text-violet-400 text-lg transition-transform group-hover:translate-x-1">→</span>
                     </div>
                   </button>
 
@@ -3972,6 +4136,516 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 );
               })()}
             </div>
+          )}
+
+          {/* TAB: DIRECT SUPPORT MESSAGES INBOX */}
+          {activeTab === 'support_messages' && (
+            <div className="space-y-4">
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-teal-950/50 border border-emerald-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 flex items-center justify-center shrink-0">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-2 flex-wrap">
+                      <span>সরাসরি সাপোর্ট মেসেজ ইনবক্স (Support Messages)</span>
+                      {newSupportMessagesCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500 text-slate-950 font-black">
+                          {newSupportMessagesCount} টি নতুন
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Contact &amp; Support ফর্ম থেকে সংরক্ষিত সকল সরাসরি মেসেজ
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700 text-xs text-slate-300 font-mono">
+                    মোট: <strong className="text-white">{supportMessages.length}</strong>
+                  </span>
+                  <span className="px-3 py-1.5 rounded-xl bg-emerald-950/80 border border-emerald-800 text-xs text-emerald-300 font-mono">
+                    নতুন: <strong>{newSupportMessagesCount}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {[
+                  { key: 'all', label: `সবগুলো (${supportMessages.length})` },
+                  { key: 'new', label: `নতুন (${supportMessages.filter(m => m.status === 'new').length})` },
+                  { key: 'read', label: `পঠিত (${supportMessages.filter(m => m.status === 'read').length})` },
+                  { key: 'resolved', label: `সমাধানকৃত (${supportMessages.filter(m => m.status === 'resolved').length})` }
+                ].map(item => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      playSound('click');
+                      setSupportMsgFilter(item.key as 'all' | 'new' | 'read' | 'resolved');
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      supportMsgFilter === item.key
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-sm'
+                        : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:bg-slate-800'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {(() => {
+                const filteredMessages = supportMessages.filter(m =>
+                  supportMsgFilter === 'all' ? true : m.status === supportMsgFilter
+                );
+
+                if (filteredMessages.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-slate-400 bg-slate-800/40 rounded-2xl border border-dashed border-slate-700 space-y-2">
+                      <Mail className="w-8 h-8 text-emerald-400 mx-auto opacity-80" />
+                      <div className="text-sm font-bold text-slate-200">
+                        এই ক্যাটাগরিতে কোনো সাপোর্ট মেসেজ নেই
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        ব্যবহারকারীরা Contact &amp; Support ফর্ম থেকে মেসেজ পাঠালে এখানে সরাসরি দেখা যাবে।
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-3">
+                    {filteredMessages.map(msg => {
+                      const isBusy = updatingSupportMsgId === msg.id;
+                      const isConfirmingDelete = confirmDeleteSupportMsgId === msg.id;
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`p-4 sm:p-5 rounded-2xl border transition-all space-y-3 shadow-sm ${
+                            msg.status === 'new'
+                              ? 'bg-slate-800/95 border-emerald-500/50'
+                              : 'bg-slate-800/70 border-slate-700/80'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono text-xs text-indigo-400 font-bold">
+                                  #{msg.id}
+                                </span>
+                                <span
+                                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                    msg.status === 'new'
+                                      ? 'bg-emerald-950 text-emerald-300 border-emerald-600'
+                                      : msg.status === 'read'
+                                        ? 'bg-sky-950 text-sky-300 border-sky-700'
+                                        : 'bg-teal-950 text-teal-300 border-teal-700'
+                                  }`}
+                                >
+                                  {msg.status === 'new'
+                                    ? '● নতুন বার্তা'
+                                    : msg.status === 'read'
+                                      ? '👁 পঠিত (Read)'
+                                      : '✓ সমাধানকৃত (Resolved)'}
+                                </span>
+                                <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  <span>{msg.date}</span>
+                                </span>
+                              </div>
+
+                              <div className="text-sm font-bold text-white flex items-center gap-2 flex-wrap">
+                                <span>{msg.userName}</span>
+                                <span className="text-xs font-mono text-emerald-400 bg-slate-900/90 px-2.5 py-0.5 rounded-md border border-slate-700">
+                                  {msg.contact}
+                                </span>
+                              </div>
+
+                              <div className="text-xs font-bold text-amber-300">
+                                বিষয়: {msg.subject}
+                              </div>
+
+                              <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs sm:text-sm text-slate-200 leading-relaxed whitespace-pre-wrap break-words">
+                                {msg.message}
+                              </div>
+                            </div>
+
+                            {/* Admin Actions: Mark Read / Mark Resolved / Delete */}
+                            <div className="flex flex-row sm:flex-col gap-2 shrink-0 flex-wrap">
+                              {msg.status === 'new' && onUpdateSupportMessageStatus && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={async () => {
+                                    playSound('click');
+                                    setUpdatingSupportMsgId(msg.id);
+                                    try {
+                                      await onUpdateSupportMessageStatus(msg.id, 'read');
+                                    } finally {
+                                      setUpdatingSupportMsgId(null);
+                                    }
+                                  }}
+                                  className="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span>পঠিত চিহ্নিত করুন</span>
+                                </button>
+                              )}
+
+                              {msg.status !== 'resolved' && onUpdateSupportMessageStatus && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={async () => {
+                                    playSound('success');
+                                    setUpdatingSupportMsgId(msg.id);
+                                    try {
+                                      await onUpdateSupportMessageStatus(msg.id, 'resolved');
+                                    } finally {
+                                      setUpdatingSupportMsgId(null);
+                                    }
+                                  }}
+                                  className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                >
+                                  <CheckCheck className="w-3.5 h-3.5" />
+                                  <span>সমাধানকৃত</span>
+                                </button>
+                              )}
+
+                              {onDeleteSupportMessage && !isConfirmingDelete && (
+                                <button
+                                  type="button"
+                                  disabled={isBusy}
+                                  onClick={() => {
+                                    playSound('click');
+                                    setConfirmDeleteSupportMsgId(msg.id);
+                                  }}
+                                  className="px-3 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 disabled:opacity-50 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>ডিলিট</span>
+                                </button>
+                              )}
+
+                              {onDeleteSupportMessage && isConfirmingDelete && (
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={async () => {
+                                      playSound('error');
+                                      setUpdatingSupportMsgId(msg.id);
+                                      try {
+                                        await onDeleteSupportMessage(msg.id);
+                                      } finally {
+                                        setUpdatingSupportMsgId(null);
+                                        setConfirmDeleteSupportMsgId(null);
+                                      }
+                                    }}
+                                    className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black cursor-pointer"
+                                  >
+                                    নিশ্চিত ডিলিট
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteSupportMsgId(null)}
+                                    className="px-2.5 py-2 rounded-xl bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer"
+                                  >
+                                    না
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* TAB: ADS MANAGER (অ্যাড ম্যানেজমেন্ট -> siteSettings/adsConfig) */}
+          {activeTab === 'ads_manager' && (
+            <form onSubmit={handleSaveAdsSettings} className="space-y-5">
+              {/* Header */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-violet-950/60 via-slate-900 to-fuchsia-950/50 border border-violet-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-violet-500/20 border border-violet-500/40 text-violet-300 flex items-center justify-center shrink-0">
+                    <Megaphone className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-2 flex-wrap">
+                      <span>অ্যাড ম্যানেজমেন্ট (Ads Manager)</span>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                          adsEnabledDraft
+                            ? 'bg-emerald-500 text-slate-950'
+                            : 'bg-slate-700 text-slate-200'
+                        }`}
+                      >
+                        {adsEnabledDraft ? 'GLOBAL ON' : 'GLOBAL OFF'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Firestore (<span className="font-mono text-violet-300">siteSettings/adsConfig</span>) এর মাধ্যমে রিডেপ্লয় ছাড়াই লাইভ অ্যাড নিয়ন্ত্রণ করুন
+                    </p>
+                  </div>
+                </div>
+
+                {/* Global Enable / Disable Switch */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={adsEnabledDraft}
+                  onClick={() => {
+                    playSound('click');
+                    setAdsEnabledDraft(prev => !prev);
+                    setAdsNotice(null);
+                  }}
+                  className={`px-4 py-2.5 rounded-xl border font-bold text-xs flex items-center gap-3 transition-all cursor-pointer shrink-0 ${
+                    adsEnabledDraft
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  <span>{adsEnabledDraft ? 'সব অ্যাড চালু (Enabled)' : 'সব অ্যাড বন্ধ (Disabled)'}</span>
+                  <span
+                    className={`w-11 h-6 rounded-full p-0.5 transition-colors flex items-center ${
+                      adsEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white shadow" />
+                  </span>
+                </button>
+              </div>
+
+              {/* Section 1: Smart Link / Direct Link URL */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center shrink-0">
+                      <Link2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">
+                        ১. Smart Link / Direct Link URL
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        যেমন: Adsterra Smart Link — ড্যাশবোর্ড ও মাইক্রো-জবস সেকশনে "Sponsored / বিজ্ঞাপন" বাটন হিসেবে দেখাবে
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={smartLinkEnabledDraft}
+                      onClick={() => {
+                        playSound('click');
+                        setSmartLinkEnabledDraft(prev => !prev);
+                        setAdsNotice(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                        smartLinkEnabledDraft
+                          ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-400'
+                      }`}
+                    >
+                      <span>{smartLinkEnabledDraft ? 'চালু (ON)' : 'বন্ধ (OFF)'}</span>
+                      <span
+                        className={`w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
+                          smartLinkEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
+                        }`}
+                      >
+                        <span className="w-3 h-3 rounded-full bg-white" />
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playSound('click');
+                        setSmartLinkUrlDraft('');
+                        setSmartLinkEnabledDraft(false);
+                        setAdsNotice({
+                          text: 'Smart Link মুছে ফেলা হয়েছে। স্থায়ীভাবে আপডেট করতে নিচে "Save Ads Settings" ক্লিক করুন। / Smart Link cleared. Click Save Ads Settings to apply.',
+                          isError: false
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Clear Smart Link"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>মুছুন / Clear</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <input
+                    type="url"
+                    value={smartLinkUrlDraft}
+                    onChange={e => {
+                      setSmartLinkUrlDraft(e.target.value);
+                      if (adsNotice) setAdsNotice(null);
+                    }}
+                    placeholder="https://www.profitablecpmrate.com/..."
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-violet-500 text-xs sm:text-sm font-mono text-white outline-none"
+                  />
+                  {smartLinkUrlDraft.trim() && sanitizeExternalHttpUrl(smartLinkUrlDraft) && (
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-emerald-400 px-1">
+                      <span>✓ বৈধ URL ফরম্যাট শনাক্ত হয়েছে</span>
+                      <a
+                        href={sanitizeExternalHttpUrl(smartLinkUrlDraft)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-violet-300 hover:text-violet-200 underline"
+                      >
+                        <span>টেস্ট লিংক দেখুন</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 2: Banner / Native Banner Ad Code */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-3.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0">
+                      <Code2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-white">
+                        ২. Banner / Native Banner Ad Code (HTML/Script)
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        Adsterra বা যেকোনো নেটওয়ার্কের HTML/Script ব্যানার কোড পেস্ট করুন — নিরাপদ স্যান্ডবক্সে নিচের সেকশনে প্রদর্শিত হবে
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={bannerEnabledDraft}
+                      onClick={() => {
+                        playSound('click');
+                        setBannerEnabledDraft(prev => !prev);
+                        setAdsNotice(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                        bannerEnabledDraft
+                          ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                          : 'bg-slate-900 border-slate-700 text-slate-400'
+                      }`}
+                    >
+                      <span>{bannerEnabledDraft ? 'চালু (ON)' : 'বন্ধ (OFF)'}</span>
+                      <span
+                        className={`w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
+                          bannerEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
+                        }`}
+                      >
+                        <span className="w-3 h-3 rounded-full bg-white" />
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playSound('click');
+                        setBannerCodeDraft('');
+                        setBannerEnabledDraft(false);
+                        setAdsNotice({
+                          text: 'ব্যানার অ্যাড কোড মুছে ফেলা হয়েছে। স্থায়ীভাবে আপডেট করতে নিচে "Save Ads Settings" ক্লিক করুন। / Banner code cleared. Click Save Ads Settings to apply.',
+                          isError: false
+                        });
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Clear Banner Code"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>মুছুন / Clear</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={6}
+                  maxLength={20000}
+                  value={bannerCodeDraft}
+                  onChange={e => {
+                    setBannerCodeDraft(e.target.value);
+                    if (adsNotice) setAdsNotice(null);
+                  }}
+                  placeholder={'<script async="async" data-cfasync="false" src="//..."></script>\n<div id="container-..."></div>'}
+                  className="w-full px-3.5 py-3 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs font-mono text-cyan-100 outline-none leading-relaxed"
+                />
+                <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <span>অক্ষর সংখ্যা: {bannerCodeDraft.trim().length} / 20,000</span>
+                  <span>Math / Quiz / Captcha প্রশ্নের ওপর কখনোই জোরপূর্বক অ্যাড দেখানো হবে না</span>
+                </div>
+              </div>
+
+              {/* Feedback Message */}
+              {adsNotice && (
+                <div
+                  className={`p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-start gap-2.5 ${
+                    adsNotice.isError
+                      ? 'bg-rose-950/60 border-rose-700 text-rose-300'
+                      : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                  }`}
+                >
+                  {adsNotice.isError ? (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  )}
+                  <span>{adsNotice.text}</span>
+                </div>
+              )}
+
+              {/* Save Action Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                <div className="text-xs text-slate-400">
+                  লাইভ স্ট্যাটাস:{' '}
+                  <strong className={adsConfig.adsEnabled ? 'text-emerald-400' : 'text-slate-300'}>
+                    {adsConfig.adsEnabled ? 'সক্রিয় (ON)' : 'বন্ধ (OFF)'}
+                  </strong>
+                  {' · '}
+                  Smart Link:{' '}
+                  <strong className={adsConfig.adsEnabled && adsConfig.smartLinkEnabled && adsConfig.smartLinkUrl ? 'text-amber-400' : 'text-slate-400'}>
+                    {adsConfig.adsEnabled && adsConfig.smartLinkEnabled && adsConfig.smartLinkUrl ? 'Live' : 'Hidden'}
+                  </strong>
+                  {' · '}
+                  Banner:{' '}
+                  <strong className={adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim() ? 'text-cyan-400' : 'text-slate-400'}>
+                    {adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim() ? 'Live' : 'Hidden'}
+                  </strong>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingAds}
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-violet-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>
+                    {isSavingAds
+                      ? 'সেভ হচ্ছে... (Saving...)'
+                      : 'Save Ads Settings (অ্যাড সেটিংস সেভ করুন)'}
+                  </span>
+                </button>
+              </div>
+            </form>
           )}
 
         </div>

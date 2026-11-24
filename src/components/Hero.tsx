@@ -28,7 +28,8 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { playSound } from '../utils/audio';
-import { Language, AppTab, UserAccount, Transaction } from '../types';
+import { Language, AppTab, UserAccount, Transaction, AdsConfig } from '../types';
+import { sanitizeExternalHttpUrl } from '../firebase';
 import { GiftCodeModal } from './GiftCodeModal';
 import { TaskHistoryModal } from './TaskHistoryModal';
 
@@ -52,6 +53,7 @@ interface HeroProps {
   onShowToast?: (msg: string) => void;
   transactions?: Transaction[];
   onClaimGiftReward?: (rewardType: 'coins' | 'balance', amount: number, code: string) => void;
+  adsConfig?: AdsConfig;
 }
 
 export const Hero: React.FC<HeroProps> = ({
@@ -73,10 +75,15 @@ export const Hero: React.FC<HeroProps> = ({
   onOpenRegister,
   onShowToast,
   transactions = [],
-  onClaimGiftReward
+  onClaimGiftReward,
+  adsConfig
 }) => {
   const isBn = language === 'bn';
   const canConvert = coins >= 1000;
+  const activeSmartLinkUrl =
+    adsConfig?.adsEnabled && adsConfig?.smartLinkEnabled
+      ? sanitizeExternalHttpUrl(adsConfig.smartLinkUrl)
+      : '';
   const [copiedReferral, setCopiedReferral] = useState(false);
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [showGiftModal, setShowGiftModal] = useState(false);
@@ -727,6 +734,32 @@ export const Hero: React.FC<HeroProps> = ({
               <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform shrink-0" />
             </div>
           </div>
+
+          {/* POLICY-SAFE SPONSORED PARTNER SMART LINK (Renders ONLY when adsEnabled & smartLinkEnabled & URL valid) */}
+          {activeSmartLinkUrl && (
+            <div className="w-full min-w-0 p-4 rounded-2xl bg-gradient-to-r from-slate-100/90 via-amber-50/70 to-slate-100/90 dark:from-slate-900 dark:via-amber-950/20 dark:to-slate-900 border border-amber-300/70 dark:border-amber-700/60 space-y-2.5 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/70 border border-amber-300/60 dark:border-amber-700/60 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                  {isBn ? 'Sponsored / বিজ্ঞাপন' : 'Sponsored / Advertisement'}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {isBn ? 'ঐচ্ছিক পার্টনার ভিজিট' : 'Optional Partner Offer'}
+                </span>
+              </div>
+              <a
+                href={activeSmartLinkUrl}
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                onClick={() => playSound('click')}
+                className="w-full min-h-[46px] px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-extrabold text-xs sm:text-sm shadow-md flex items-center justify-between gap-2 transition-all cursor-pointer"
+              >
+                <span className="truncate">
+                  {isBn ? 'স্পন্সরড পার্টনার অফার দেখুন (Sponsored Link)' : 'Explore Sponsored Partner Offer'}
+                </span>
+                <ExternalLink className="w-4 h-4 shrink-0" />
+              </a>
+            </div>
+          )}
 
         </div>
 

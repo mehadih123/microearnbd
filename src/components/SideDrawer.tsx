@@ -232,10 +232,10 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
             </div>
           </div>
 
-          {/* Navigation Tabs Links — Strictly Separate Math Task & Quiz Job */}
+          {/* Navigation Tabs Links — Cleanly Grouped Mobile Menu & Settings */}
           <div className="space-y-1.5">
-            <div className="text-xs font-bold tracking-wide text-slate-500 dark:text-slate-400 px-3 mb-1">
-              {isBn ? 'সেকশন ও আর্নিং টাস্কসমূহ' : 'Sections & Tasks'}
+            <div className="text-xs font-bold tracking-wide text-slate-500 dark:text-slate-400 px-2 mb-1">
+              {isBn ? 'টাস্ক ও উপার্জন (Tasks & Earning)' : 'Tasks & Earning'}
             </div>
 
             <button
@@ -253,7 +253,6 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
-            {/* SEPARATE NAV BUTTON 1: MATH TASK */}
             <button
               onClick={() => {
                 playSound('click');
@@ -264,12 +263,11 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
             >
               <div className="flex items-center gap-3">
                 <Calculator className="w-4 h-4 text-teal-500" />
-                <span>{isBn ? 'ম্যাথ টাস্ক (সহজ যোগ +৫০ কয়েন)' : 'Math Task (+50 Coins)'}</span>
+                <span>{isBn ? 'ম্যাথ টাস্ক (+৫০ কয়েন)' : 'Math Task (+50 Coins)'}</span>
               </div>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
-            {/* SEPARATE NAV BUTTON 2: QUIZ JOB */}
             <button
               onClick={() => {
                 playSound('click');
@@ -280,12 +278,11 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
             >
               <div className="flex items-center gap-3">
                 <HelpCircle className="w-4 h-4 text-amber-500" />
-                <span>{isBn ? 'কুইজ জব (সাধারণ জ্ঞান +৫০ কয়েন)' : 'Quiz Job (+50 Coins)'}</span>
+                <span>{isBn ? 'কুইজ জব (+৫০ কয়েন)' : 'Quiz Job (+50 Coins)'}</span>
               </div>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
-            {/* SEPARATE NAV BUTTON 3: CAPTCHA SOLVING */}
             <button
               onClick={() => {
                 playSound('click');
@@ -331,7 +328,6 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
-            {/* Spin & Win Dedicated Wheel Link */}
             <button
               onClick={() => {
                 playSound('click');
@@ -342,140 +338,126 @@ export const SideDrawer: React.FC<SideDrawerProps> = ({
             >
               <div className="flex items-center gap-3">
                 <Sparkles className="w-4 h-4 text-purple-500" />
-                <span>{isBn ? 'স্পিন & উইন হুইল (৳১০ এ ৳৫-৳২০)' : 'Spin & Win Wheel'}</span>
+                <span>{isBn ? 'স্পিন & উইন হুইল' : 'Spin & Win Wheel'}</span>
               </div>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </button>
 
-            <button
-              onClick={() => handleNavTab('analytics')}
-              className={`w-full min-h-[44px] flex items-center justify-between p-3 rounded-xl transition-colors cursor-pointer text-sm font-semibold ${
-                activeTab === 'analytics'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold border border-emerald-200/60 dark:border-emerald-800/60'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <BarChart3 className="w-4 h-4 text-purple-500" />
-                <span>{isBn ? 'ড্যাশবোর্ড ও লেনদেন' : 'Analytics & Wallet'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
-
-            <button
-              onClick={() => handleNavTab('support')}
-              className={`w-full min-h-[44px] flex items-center justify-between p-3 rounded-xl transition-colors cursor-pointer text-sm font-semibold ${
-                activeTab === 'support'
-                  ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 font-bold border border-teal-200/60 dark:border-teal-800/60'
-                  : 'hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <MessageSquare className="w-4 h-4 text-teal-600" />
-                <span>{isBn ? 'মতামত বা অভিযোগ বক্স' : 'Feedback & Complaints'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
-          </div>
-
-          {/* Quick Actions & Extras */}
-          <div className="space-y-1 pt-2 border-t border-slate-100 dark:border-slate-800">
             <button
               onClick={() => { playSound('click'); onClose(); onOpenCreateJob(); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer"
+              className="w-full min-h-[44px] flex items-center justify-between p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-800 dark:text-emerald-300 text-xs font-bold transition-colors cursor-pointer mt-1"
             >
               <div className="flex items-center gap-3">
                 <PlusCircle className="w-4 h-4 text-emerald-600" />
                 <span>{isBn ? 'কাজ পোস্ট করুন (Create a Job)' : 'Post a Micro Job'}</span>
               </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600 text-white font-normal">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-600 text-white font-semibold">
                 {isBn ? 'পাবলিক' : 'Public'}
               </span>
             </button>
-
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenProfile(); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <User className="w-4 h-4 text-emerald-500" />
-                <span>{isBn ? 'প্রোফাইল বিবরণী' : 'Profile Details'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
-
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenRules(); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4 text-slate-500" />
-                <span>{isBn ? 'এস্ক্রো নিয়মাবলী' : 'Escrow Rules'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
           </div>
 
-          {/* Individual Unpacked Menu Options: Contact Us, Privacy Policy, Support/Help, Rules, Terms */}
-          <div className="space-y-1 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-3 mb-1">
-              {isBn ? 'সহায়তা ও নীতিমালা' : 'Support & Legal Options'}
+          {/* Account & Settings Grouped Card */}
+          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2">
+              {isBn ? 'সেটিংস ও অ্যাকাউন্ট (Settings)' : 'Account & Settings'}
             </div>
 
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('contact'); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <Mail className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                <span>{isBn ? 'যোগাযোগ করুন (Contact Us)' : 'Contact Us'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+            <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 divide-y divide-slate-200/70 dark:divide-slate-700/50 overflow-hidden">
+              <button
+                onClick={() => { playSound('click'); onClose(); onOpenProfile(); }}
+                className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <User className="w-4 h-4 text-emerald-500" />
+                  <span>{isBn ? 'প্রোফাইল ও নিরাপত্তা সেটিংস' : 'Profile & Security Settings'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
 
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('privacy'); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span>{isBn ? 'গোপনীয়তা নীতি (Privacy Policy)' : 'Privacy Policy'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+              <button
+                onClick={() => handleNavTab('analytics')}
+                className={`w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'analytics'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold'
+                    : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <BarChart3 className="w-4 h-4 text-purple-500" />
+                  <span>{isBn ? 'ড্যাশবোর্ড ও লেনদেন হিস্ট্রি' : 'Wallet & Analytics'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
 
-            <button
-              onClick={() => { playSound('click'); onClose(); onSelectTab('support'); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <HelpCircle className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-                <span>{isBn ? 'সহায়তা ও সাপোর্ট (Support & Help)' : 'Support & Help'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+              <button
+                onClick={() => handleNavTab('support')}
+                className={`w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 text-xs font-semibold transition-colors cursor-pointer ${
+                  activeTab === 'support'
+                    ? 'bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 font-bold'
+                    : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <MessageSquare className="w-4 h-4 text-teal-600" />
+                  <span>{isBn ? 'মতামত বা অভিযোগ বক্স' : 'Feedback & Complaints'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
 
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenRules(); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <ShieldCheck className="w-4 h-4 text-amber-500" />
-                <span>{isBn ? 'নিয়মাবলী ও নির্দেশিকা (Rules & Guide)' : 'Rules & Guidelines'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+              <button
+                onClick={() => { playSound('click'); onClose(); onOpenRules(); }}
+                className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="w-4 h-4 text-amber-500" />
+                  <span>{isBn ? 'নিয়মাবলী ও স্মার্ট এস্ক্রো গাইড' : 'Platform & Escrow Rules'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            </div>
+          </div>
 
-            <button
-              onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('terms'); }}
-              className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                <span>{isBn ? 'শর্তাবলী (Terms & Conditions)' : 'Terms & Conditions'}</span>
-              </div>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
+          {/* Legal & Support Grouped Card (Clean 3-Item Settings Navigation) */}
+          <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-2">
+              {isBn ? 'আইনি নীতিমালা ও সহায়তা (Legal & Support)' : 'Legal & Support'}
+            </div>
+
+            <div className="rounded-2xl bg-slate-50/90 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-700/60 divide-y divide-slate-200/70 dark:divide-slate-700/50 overflow-hidden">
+              <button
+                onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('privacy'); }}
+                className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <Lock className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>{isBn ? 'প্রাইভেসি পলিসি (Privacy Policy)' : 'Privacy Policy'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+
+              <button
+                onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('terms'); }}
+                className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <FileText className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                  <span>{isBn ? 'শর্তাবলি (Terms & Conditions)' : 'Terms & Conditions'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+
+              <button
+                onClick={() => { playSound('click'); onClose(); onOpenPolicyPage('contact'); }}
+                className="w-full min-h-[44px] flex items-center justify-between px-3.5 py-3 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <Mail className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>{isBn ? 'যোগাযোগ ও সহায়তা (Contact & Support)' : 'Contact & Support'}</span>
+                </div>
+                <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+              </button>
+            </div>
           </div>
 
         </div>

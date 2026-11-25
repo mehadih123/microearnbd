@@ -2248,22 +2248,29 @@
       increment
     } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-    // 1. Firebase Configuration (taskvaultbd)
-    const firebaseConfig = {
-      apiKey: "AIzaSyAvZ0lDlSezVUsfN0L4tsRUSb8LINF4gXk",
-      authDomain: "taskvaultbd.firebaseapp.com",
-      databaseURL: "https://taskvaultbd-default-rtdb.firebaseio.com",
-      projectId: "taskvaultbd",
-      storageBucket: "taskvaultbd.firebasestorage.app",
-      messagingSenderId: "1031088237940",
-      appId: "1:1031088237940:web:c63255279361c9fd3a1021",
-      firestoreDatabaseId: "ai-studio-mehadiearnresell-16cf3cfa-0cf8-4ccc-8ae2-79dfaaa7b23b"
-    };
+    // 1. Firebase Configuration (loaded dynamically at runtime; never hardcoded in HTML)
+    async function loadRuntimeFirebaseConfig() {
+      if (window.__TASKVAULT_FIREBASE_CONFIG__ && window.__TASKVAULT_FIREBASE_CONFIG__.apiKey) {
+        return window.__TASKVAULT_FIREBASE_CONFIG__;
+      }
+      try {
+        const res = await fetch('/api/firebase-config', { cache: 'no-store' });
+        if (res.ok) {
+          const cfg = await res.json();
+          if (cfg && cfg.apiKey && cfg.projectId) {
+            return cfg;
+          }
+        }
+      } catch {
+        // Standalone file opened without local server or offline
+      }
+      return null;
+    }
 
     const ADMIN_EMAIL = 'mdmehadih181@gmail.com';
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    let app = null;
+    let auth = null;
+    let db = null;
     const googleProvider = new GoogleAuthProvider();
     googleProvider.setCustomParameters({ prompt: 'select_account' });
 
@@ -2271,10 +2278,10 @@
       const errInfo = {
         error: error instanceof Error ? error.message : String(error),
         authInfo: {
-          userId: auth.currentUser?.uid,
-          email: auth.currentUser?.email,
-          emailVerified: auth.currentUser?.emailVerified,
-          isAnonymous: auth.currentUser?.isAnonymous
+          userId: auth?.currentUser?.uid,
+          email: auth?.currentUser?.email,
+          emailVerified: auth?.currentUser?.emailVerified,
+          isAnonymous: auth?.currentUser?.isAnonymous
         },
         operationType,
         path
@@ -2283,8 +2290,8 @@
       return errInfo;
     }
 
-    // Boot Connection Verification
-    (async function testConnection() {
+    async function testConnection() {
+      if (!db) return;
       try {
         await getDocFromServer(doc(db, 'test', 'connection'));
       } catch (err) {
@@ -2292,7 +2299,7 @@
           console.error('Please check your Firebase configuration.');
         }
       }
-    })();
+    }
 
     // Compress base64 product uploads so Firestore documents remain fast & within rule limits
     function compressImageDataUrl(input, maxChars = 175000) {
@@ -2465,52 +2472,7 @@
       };
     }
 
-    // 2. Global Real-Time Listeners: Products & Micro-Jobs (Live for ALL visitors!)
-    onSnapshot(
-      query(collection(db, 'products'), where('status', '==', 'published')),
-      (snap) => {
-        const list = snap.docs.map((d) => {
-          const item = d.data();
-          return {
-            id: item.id || d.id,
-            nameBn: item.title || '',
-            nameEn: item.titleEn || '',
-            category: item.category || 'অন্যান্য',
-            img: item.image || '',
-            price: Number(item.customerPrice || 0),
-            commission: Number(item.commission || 0),
-            deliveryInside: Number(item.deliveryChargeInside ?? 60),
-            deliveryOutside: Number(item.deliveryChargeOutside ?? 120)
-          };
-        });
-        state.products = list;
-        renderUI();
-        if (!document.getElementById('modal-secret-admin').classList.contains('hidden')) {
-          renderAdminTables();
-        }
-      },
-      (err) => handleFirestoreError(err, 'list', 'products')
-    );
-
-    onSnapshot(
-      query(collection(db, 'jobs'), where('status', '==', 'active')),
-      (snap) => {
-        state.jobs = snap.docs.map((d) => {
-          const j = d.data();
-          return {
-            id: j.id || d.id,
-            title: j.title || '',
-            reward: Number(j.reward || 0),
-            url: j.targetUrl || '#',
-            workers: Number(j.totalSlots || 50)
-          };
-        });
-        renderUI();
-      },
-      (err) => handleFirestoreError(err, 'list', 'jobs')
-    );
-
-    // 3. Real-Time Auth & User / Admin Sync
+    // 2. Global Real-Time Listeners & Auth Sync (started after runtime Firebase config loads)
     function cleanupUserListeners() {
       if (unsubUserDoc) { unsubUserDoc(); unsubUserDoc = null; }
       if (unsubAdminUsers) { unsubAdminUsers(); unsubAdminUsers = null; }
@@ -2518,7 +2480,54 @@
       if (unsubFeedbacks) { unsubFeedbacks(); unsubFeedbacks = null; }
     }
 
-    onAuthStateChanged(auth, async (fbUser) => {
+    function attachFirebaseListeners() {
+      if (!auth || !db) return;
+
+      onSnapshot(
+        query(collection(db, 'products'), where('status', '==', 'published')),
+        (snap) => {
+          const list = snap.docs.map((d) => {
+            const item = d.data();
+            return {
+              id: item.id || d.id,
+              nameBn: item.title || '',
+              nameEn: item.titleEn || '',
+              category: item.category || 'অন্যান্য',
+              img: item.image || '',
+              price: Number(item.customerPrice || 0),
+              commission: Number(item.commission || 0),
+              deliveryInside: Number(item.deliveryChargeInside ?? 60),
+              deliveryOutside: Number(item.deliveryChargeOutside ?? 120)
+            };
+          });
+          state.products = list;
+          renderUI();
+          if (!document.getElementById('modal-secret-admin').classList.contains('hidden')) {
+            renderAdminTables();
+          }
+        },
+        (err) => handleFirestoreError(err, 'list', 'products')
+      );
+
+      onSnapshot(
+        query(collection(db, 'jobs'), where('status', '==', 'active')),
+        (snap) => {
+          state.jobs = snap.docs.map((d) => {
+            const j = d.data();
+            return {
+              id: j.id || d.id,
+              title: j.title || '',
+              reward: Number(j.reward || 0),
+              url: j.targetUrl || '#',
+              workers: Number(j.totalSlots || 50)
+            };
+          });
+          renderUI();
+        },
+        (err) => handleFirestoreError(err, 'list', 'jobs')
+      );
+
+      onAuthStateChanged(auth, async (fbUser) => {
       cleanupUserListeners();
       if (!fbUser) {
         state.currentUser = null;
@@ -2683,7 +2692,22 @@
           (err) => handleFirestoreError(err, 'list', 'withdrawals')
         );
       }
-    });
+      });
+    }
+
+    (async function startFirebaseRuntime() {
+      const cfg = await loadRuntimeFirebaseConfig();
+      if (!cfg) {
+        console.warn('Firebase runtime config unavailable from /api/firebase-config.');
+        renderUI();
+        return;
+      }
+      app = initializeApp(cfg);
+      auth = getAuth(app);
+      db = cfg.firestoreDatabaseId ? getFirestore(app, cfg.firestoreDatabaseId) : getFirestore(app);
+      testConnection();
+      attachFirebaseListeners();
+    })();
 
     // Wallet & Coin Helpers (Cloud Synced!)
     function getActiveCoins() {

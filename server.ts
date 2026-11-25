@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express, { type Request, type Response } from 'express';
@@ -72,7 +73,12 @@ function checkRateLimit(clientKey: string): boolean {
 }
 
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = (process.env.GEMINI_API_KEY || process.env.GEMINIAPIKEY)?.trim();
+  const apiKey = (
+    process.env.GEMINI_API_KEY ||
+    process.env.GEMINIAPIKEY ||
+    process.env.API_KEY ||
+    ''
+  ).trim();
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     return null;
   }
@@ -261,8 +267,11 @@ async function createStreamWithRetry(
   const modelsToTry = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
   let lastError: unknown;
 
-  for (const modelName of modelsToTry) {
+  for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
+    const modelName = modelsToTry[mIdx];
+    const hasNextModel = mIdx < modelsToTry.length - 1;
     const maxAttempts = 2;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         return await ai.models.generateContentStream({
@@ -282,10 +291,14 @@ async function createStreamWithRetry(
           break; // Try fallback model
         }
         const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
-        if (!retryable || attempt === maxAttempts) {
+        if (!retryable) {
           throw err;
         }
-        await sleep(300 * Math.pow(2, attempt - 1));
+        if (attempt === maxAttempts) {
+          if (hasNextModel) break;
+          throw err;
+        }
+        await sleep(350 * Math.pow(2, attempt - 1));
       }
     }
   }
@@ -301,7 +314,9 @@ async function generateOnceWithFallback(
   const modelsToTry = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
   let lastError: unknown;
 
-  for (const modelName of modelsToTry) {
+  for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
+    const modelName = modelsToTry[mIdx];
+    const hasNextModel = mIdx < modelsToTry.length - 1;
     try {
       return await ai.models.generateContent({
         model: modelName,
@@ -315,7 +330,8 @@ async function generateOnceWithFallback(
       });
     } catch (err: unknown) {
       lastError = err;
-      if (isModelNotFoundError(err)) {
+      const status = (err as { status?: number })?.status;
+      if (isModelNotFoundError(err) || ((status === 429 || status === 503) && hasNextModel)) {
         continue;
       }
       throw err;
@@ -325,32 +341,51 @@ async function generateOnceWithFallback(
   throw lastError;
 }
 
-function classifyGeminiError(err: unknown): { status: number; message: string } {
+function classifyGeminiError(err: unknown, language?: 'bn' | 'en'): { status: number; message: string } {
   console.error('[SupportChat Gemini Error]', err);
-  const rawMessage = (err as { message?: string })?.message || 'Unexpected AI service error.';
+  const isBn = language !== 'en';
+  const rawMessage = ((err as { message?: string })?.message || '').toString();
+  const lower = rawMessage.toLowerCase();
   const status = (err as { status?: number })?.status;
 
-  if (status === 400 || rawMessage.includes('API_KEY_INVALID')) {
+  if (status === 400 || lower.includes('api_key_invalid') || lower.includes('api key not valid')) {
     return {
       status: 400,
-      message: 'AI service configuration needs a valid Gemini API key in Settings > Secrets.',
+      message: isBn
+        ? 'AI সাপোর্ট কীটি সঠিক নয়। অনুগ্রহ করে Settings > Secrets-এ সঠিক GEMINI_API_KEY সেট করুন।'
+        : 'AI service configuration needs a valid GEMINI_API_KEY in Settings > Secrets.',
     };
   }
-  if (status === 403 || rawMessage.includes('PERMISSION_DENIED')) {
+  if (status === 403 || lower.includes('permission_denied')) {
     return {
       status: 403,
-      message: 'AI service permission denied. Please verify your Gemini API key in Settings > Secrets.',
+      message: isBn
+        ? 'Gemini API পারমিশন পাওয়া যায়নি। Settings > Secrets-এ GEMINI_API_KEY যাচাই করুন।'
+        : 'AI service permission denied. Please verify your GEMINI_API_KEY in Settings > Secrets.',
     };
   }
-  if (status === 429 || rawMessage.includes('RESOURCE_EXHAUSTED')) {
+  if (
+    status === 429 ||
+    status === 503 ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('quota') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('overloaded') ||
+    lower.includes('unavailable')
+  ) {
     return {
       status: 429,
-      message: 'AI support is handling high traffic right now. Please retry in a few seconds.',
+      message: isBn
+        ? 'AI সাপোর্ট এখন সাময়িকভাবে ব্যস্ত (অনেক অনুরোধ একসাথে এসেছে)। অনুগ্রহ করে ১৫–৩০ সেকেন্ড পর আবার চেষ্টা করুন।'
+        : 'AI support is temporarily busy due to high traffic. Please wait 15–30 seconds and retry.',
     };
   }
   return {
     status: 500,
-    message: 'Unable to reach AI Support right now. Please try again shortly.',
+    message: isBn
+      ? 'এই মুহূর্তে AI সাপোর্টের সাথে সংযোগ করা যাচ্ছে না। কিছুক্ষণ পর আবার চেষ্টা করুন।'
+      : 'Unable to reach AI Support right now. Please try again shortly.',
   };
 }
 
@@ -364,7 +399,31 @@ async function startServer() {
       service: 'microearnbd-support-api',
       model: GEMINI_MODEL,
       multimodal: true,
+      configured: Boolean(getGeminiClient()),
     });
+  });
+
+  app.get('/api/firebase-config', (_req: Request, res: Response) => {
+    try {
+      const configPath = path.resolve(__dirname, 'firebase-applet-config.json');
+      if (!fs.existsSync(configPath)) {
+        res.status(404).json({ error: 'Firebase runtime config not found.' });
+        return;
+      }
+      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({
+        projectId: parsed.projectId || '',
+        appId: parsed.appId || '',
+        apiKey: parsed.apiKey || '',
+        authDomain: parsed.authDomain || '',
+        firestoreDatabaseId: parsed.firestoreDatabaseId || '',
+        storageBucket: parsed.storageBucket || '',
+        messagingSenderId: parsed.messagingSenderId || '',
+      });
+    } catch {
+      res.status(500).json({ error: 'Unable to load Firebase runtime configuration.' });
+    }
   });
 
   app.post('/api/support-chat', async (req: Request, res: Response) => {
@@ -397,17 +456,21 @@ async function startServer() {
           : undefined,
       }))
       .filter(item => item.text.length > 0 || (item.attachments && item.attachments.length > 0))
-      .slice(-16);
+      .slice(-8);
 
     if (sanitizedTurns.length === 0 || sanitizedTurns[sanitizedTurns.length - 1].role !== 'user') {
       res.status(400).json({ error: 'The latest message must be a user message or attachment.' });
       return;
     }
 
+    const reqLang = body.context?.language === 'en' ? 'en' : 'bn';
     const ai = getGeminiClient();
     if (!ai) {
       res.status(503).json({
-        error: 'AI Support Assistant needs a GEMINI_API_KEY configured in Settings > Secrets (or server environment variables).',
+        error:
+          reqLang === 'en'
+            ? 'AI Support Assistant needs a GEMINI_API_KEY configured in Settings > Secrets.'
+            : 'AI সাপোর্ট চালু করতে Settings > Secrets-এ GEMINI_API_KEY সেট করুন।',
       });
       return;
     }
@@ -426,7 +489,7 @@ async function startServer() {
         const result = await generateOnceWithFallback(ai, systemInstruction, contents);
         res.json({ text: result.text ?? '' });
       } catch (err: unknown) {
-        const mapped = classifyGeminiError(err);
+        const mapped = classifyGeminiError(err, reqLang);
         res.status(mapped.status).json({ error: mapped.message });
       }
       return;
@@ -456,7 +519,7 @@ async function startServer() {
         res.end();
       }
     } catch (err: unknown) {
-      const mapped = classifyGeminiError(err);
+      const mapped = classifyGeminiError(err, reqLang);
       if (!clientClosed) {
         res.write(`data: ${JSON.stringify({ error: mapped.message })}\n\n`);
         res.end();

@@ -12,6 +12,7 @@ interface CaptchaModalProps {
   onWinCaptchaCoins: (coinsWon: number) => Promise<void> | void;
   onConvertCoins: () => Promise<void> | void;
   onShowToast: (msg: string) => void;
+  onTaskSubmitted?: () => void;
   language?: Language;
 }
 
@@ -23,6 +24,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
   onWinCaptchaCoins,
   onConvertCoins,
   onShowToast,
+  onTaskSubmitted,
   language = 'bn'
 }) => {
   const isBn = language === 'bn';
@@ -65,6 +67,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
         });
         onShowToast(isBn ? '+৫০ কয়েন যোগ হয়েছে!' : '+50 Coins earned!');
         setChallenge(generateCaptchaChallenge());
+        onTaskSubmitted?.();
       } finally {
         if (isMountedRef.current) {
           setIsProcessingReward(false);
@@ -80,6 +83,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
           ? 'ভুল ক্যাপচা! একই ক্যাপচা পুনরায় করার সুযোগ নেই — নতুন ক্যাপচা দেওয়া হয়েছে।'
           : 'Wrong selection! Penalty: skipped immediately to a brand new captcha.'
       });
+      onTaskSubmitted?.();
     }
   };
 

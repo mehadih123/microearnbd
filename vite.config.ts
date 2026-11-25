@@ -1,33 +1,15 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '');
-  const rawGeminiKey = (
-    env.GEMINIAPIKEY ||
-    process.env.GEMINIAPIKEY ||
-    env.VITE_GEMINIAPIKEY ||
-    env.VITE_GEMINI_API_KEY ||
-    env.GEMINI_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    ''
-  ).trim();
-  const resolvedGeminiKey = rawGeminiKey === 'MY_GEMINI_API_KEY' ? '' : rawGeminiKey;
-
+export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
-    envPrefix: ['VITE_', 'GEMINI'],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
-    },
-    define: {
-      'import.meta.env.GEMINIAPIKEY': JSON.stringify(resolvedGeminiKey),
-      'import.meta.env.GEMINI_API_KEY': JSON.stringify(resolvedGeminiKey),
-      'process.env.GEMINIAPIKEY': JSON.stringify(resolvedGeminiKey),
     },
     server: {
       port: 3000,

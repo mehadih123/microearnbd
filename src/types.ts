@@ -203,12 +203,48 @@ export interface NotificationItem {
   read: boolean;
 }
 
+export type TaskAdSlotKey =
+  | 'banner300x250'
+  | 'banner468x60'
+  | 'banner160x300'
+  | 'banner160x600'
+  | 'banner320x50'
+  | 'banner728x90'
+  | 'nativeBanner';
+
+export type AdBoxKey =
+  | 'smartLink'
+  | TaskAdSlotKey
+  | 'socialBar'
+  | 'popunder';
+
 export interface AdsConfig {
   adsEnabled: boolean;
   smartLinkEnabled: boolean;
   smartLinkUrl: string;
   bannerEnabled: boolean;
   bannerCode: string;
+  banner300x250Enabled?: boolean;
+  banner300x250Code?: string;
+  banner468x60Enabled?: boolean;
+  banner468x60Code?: string;
+  banner160x300Enabled?: boolean;
+  banner160x300Code?: string;
+  banner160x600Enabled?: boolean;
+  banner160x600Code?: string;
+  banner320x50Enabled?: boolean;
+  banner320x50Code?: string;
+  banner728x90Enabled?: boolean;
+  banner728x90Code?: string;
+  nativeBannerEnabled?: boolean;
+  nativeBannerCode?: string;
+  socialBarEnabled?: boolean;
+  socialBarCode?: string;
+  popunderEnabled?: boolean;
+  popunderCode?: string;
+  visibleBoxes?: AdBoxKey[];
+  taskAdInterval?: 2 | 3;
+  taskAdSlot?: TaskAdSlotKey;
   updatedAtMs?: number;
   updatedBy?: string;
 }

@@ -362,7 +362,19 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'id', 'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
-          'bannerEnabled', 'bannerCode', 'updatedBy', 'updatedAt'
+          'bannerEnabled', 'bannerCode',
+          'banner300x250Enabled', 'banner300x250Code',
+          'banner468x60Enabled', 'banner468x60Code',
+          'banner160x300Enabled', 'banner160x300Code',
+          'banner160x600Enabled', 'banner160x600Code',
+          'banner320x50Enabled', 'banner320x50Code',
+          'banner728x90Enabled', 'banner728x90Code',
+          'nativeBannerEnabled', 'nativeBannerCode',
+          'socialBarEnabled', 'socialBarCode',
+          'popunderEnabled', 'popunderCode',
+          'visibleBoxes',
+          'taskAdInterval', 'taskAdSlot',
+          'updatedBy', 'updatedAt'
         ])
         && isValidId(data.id)
         && data.adsEnabled is bool
@@ -371,6 +383,35 @@ service cloud.firestore {
         && (data.smartLinkUrl == '' || data.smartLinkUrl.matches('^https?://.*'))
         && data.bannerEnabled is bool
         && data.bannerCode is string && data.bannerCode.size() <= 20000
+        && (!('banner300x250Enabled' in data) || data.banner300x250Enabled is bool)
+        && (!('banner300x250Code' in data) || (data.banner300x250Code is string && data.banner300x250Code.size() <= 20000))
+        && (!('banner468x60Enabled' in data) || data.banner468x60Enabled is bool)
+        && (!('banner468x60Code' in data) || (data.banner468x60Code is string && data.banner468x60Code.size() <= 20000))
+        && (!('banner160x300Enabled' in data) || data.banner160x300Enabled is bool)
+        && (!('banner160x300Code' in data) || (data.banner160x300Code is string && data.banner160x300Code.size() <= 20000))
+        && (!('banner160x600Enabled' in data) || data.banner160x600Enabled is bool)
+        && (!('banner160x600Code' in data) || (data.banner160x600Code is string && data.banner160x600Code.size() <= 20000))
+        && (!('banner320x50Enabled' in data) || data.banner320x50Enabled is bool)
+        && (!('banner320x50Code' in data) || (data.banner320x50Code is string && data.banner320x50Code.size() <= 20000))
+        && (!('banner728x90Enabled' in data) || data.banner728x90Enabled is bool)
+        && (!('banner728x90Code' in data) || (data.banner728x90Code is string && data.banner728x90Code.size() <= 20000))
+        && (!('nativeBannerEnabled' in data) || data.nativeBannerEnabled is bool)
+        && (!('nativeBannerCode' in data) || (data.nativeBannerCode is string && data.nativeBannerCode.size() <= 20000))
+        && (!('socialBarEnabled' in data) || data.socialBarEnabled is bool)
+        && (!('socialBarCode' in data) || (data.socialBarCode is string && data.socialBarCode.size() <= 20000))
+        && (!('popunderEnabled' in data) || data.popunderEnabled is bool)
+        && (!('popunderCode' in data) || (data.popunderCode is string && data.popunderCode.size() <= 20000))
+        && (!('visibleBoxes' in data) || (
+          data.visibleBoxes is list &&
+          data.visibleBoxes.size() <= 10 &&
+          (data.visibleBoxes.size() == 0 || (data.visibleBoxes[0] is string && data.visibleBoxes[0].size() <= 32))
+        ))
+        && (!('taskAdInterval' in data) || (data.taskAdInterval is int && data.taskAdInterval in [2, 3]))
+        && (!('taskAdSlot' in data) || (
+          data.taskAdSlot is string &&
+          data.taskAdSlot.size() <= 32 &&
+          data.taskAdSlot in ['banner300x250', 'banner468x60', 'banner160x300', 'banner160x600', 'banner320x50', 'banner728x90', 'nativeBanner']
+        ))
         && isValidId(data.updatedBy)
         && data.updatedAt is timestamp;
     }
@@ -914,7 +955,19 @@ service cloud.firestore {
         && isAdmin()
         && incoming().diff(existing()).affectedKeys().hasOnly([
           'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
-          'bannerEnabled', 'bannerCode', 'updatedBy', 'updatedAt'
+          'bannerEnabled', 'bannerCode',
+          'banner300x250Enabled', 'banner300x250Code',
+          'banner468x60Enabled', 'banner468x60Code',
+          'banner160x300Enabled', 'banner160x300Code',
+          'banner160x600Enabled', 'banner160x600Code',
+          'banner320x50Enabled', 'banner320x50Code',
+          'banner728x90Enabled', 'banner728x90Code',
+          'nativeBannerEnabled', 'nativeBannerCode',
+          'socialBarEnabled', 'socialBarCode',
+          'popunderEnabled', 'popunderCode',
+          'visibleBoxes',
+          'taskAdInterval', 'taskAdSlot',
+          'updatedBy', 'updatedAt'
         ]);
 
       allow delete: if false;

@@ -12,6 +12,7 @@ interface MathTaskModalProps {
   onWinMathCoins: (coinsWon: number) => Promise<void> | void;
   onConvertCoins: () => Promise<void> | void;
   onShowToast: (msg: string) => void;
+  onTaskSubmitted?: () => void;
   language?: Language;
 }
 
@@ -23,6 +24,7 @@ export const MathTaskModal: React.FC<MathTaskModalProps> = ({
   onWinMathCoins,
   onConvertCoins,
   onShowToast,
+  onTaskSubmitted,
   language = 'bn'
 }) => {
   const isBn = language === 'bn';
@@ -64,6 +66,7 @@ export const MathTaskModal: React.FC<MathTaskModalProps> = ({
         onShowToast(isBn ? '+৫০ কয়েন যোগ হয়েছে!' : '+50 Coins earned!');
         setProblem(prev => generateAdditionProblem(prev.id));
         setUserAnswer('');
+        onTaskSubmitted?.();
       } finally {
         if (isMountedRef.current) {
           setIsProcessingReward(false);
@@ -80,6 +83,7 @@ export const MathTaskModal: React.FC<MathTaskModalProps> = ({
           ? 'ভুল উত্তর! একই অংক পুনরায় করার সুযোগ নেই — নতুন অংক দেওয়া হয়েছে।'
           : 'Wrong answer! Penalty: skipped immediately to a brand new addition problem.'
       });
+      onTaskSubmitted?.();
     }
   };
 

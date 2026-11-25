@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { Component, useState, useRef, useEffect } from 'react';
 import {
   Send,
   Trash2,
@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { AppTab, Language, UserAccount } from '../types';
 import { playSound } from '../utils/audio';
-import { getClientGeminiApiKey, streamDirectGeminiReply } from '../utils/supportGemini';
 
 interface ChatAttachment {
   id: string;
@@ -302,7 +301,7 @@ function detectSpeechLanguage(text: string, fallbackBn: boolean): 'bn-BD' | 'en-
   return bnCount >= enCount || bnCount >= 12 ? 'bn-BD' : 'en-US';
 }
 
-export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
+const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
   language,
   currentUser,
   activeTab,
@@ -889,26 +888,156 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
         publishedProductsCount
       };
 
-      const directApiKey = getClientGeminiApiKey();
-      if (!directApiKey) {
+      const res = await fetch('/api/support-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: historyForApi,
+          context: supportContext,
+          stream: true
+        }),
+        signal: controller.signal
+      });
+
+      if (!res.ok) {
+        let serverError = '';
+        try {
+          const errPayload = (await res.json()) as { error?: string };
+          serverError = errPayload?.error || '';
+        } catch {
+          serverError = '';
+        }
+        if (serverError) {
+          throw new Error(serverError);
+        }
+        if (res.status === 429) {
+          throw new Error(
+            isBn
+              ? 'AI সার্ভিসে এখন অনেক চাপ রয়েছে (Rate limit)। অনুগ্রহ করে ১০-১৫ সেকেন্ড পর আবার চেষ্টা করুন।'
+              : 'AI service is temporarily busy (rate limit). Please wait 10–15 seconds and try again.'
+          );
+        }
+        if (res.status === 503) {
+          throw new Error(
+            isBn
+              ? 'AI সাপোর্ট সার্ভিস সাময়িকভাবে অনুপলব্ধ। অ্যাপ সেটিংসে GEMINI_API_KEY সেট করা আছে কিনা যাচাই করুন অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।'
+              : 'AI Support service is temporarily unavailable. Please check that GEMINI_API_KEY is configured in Settings > Secrets or try again shortly.'
+          );
+        }
         throw new Error(
           isBn
-            ? 'AI সাপোর্ট চালু করতে বিল্ড এনভায়রনমেন্ট ভ্যারিয়েবলে GEMINIAPIKEY যুক্ত করে পুনরায় ডিপ্লয় করুন।'
-            : 'GEMINIAPIKEY is not configured. Please add GEMINIAPIKEY to your build environment variables and redeploy.'
+            ? 'সার্ভারের সাথে সংযোগ করতে সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।'
+            : 'Unable to reach AI Support right now. Please try again.'
         );
       }
 
-      await streamDirectGeminiReply({
-        apiKey: directApiKey,
-        turns: historyForApi,
-        context: supportContext,
-        signal: controller.signal,
-        onChunk: accumulated => {
+      let accumulated = '';
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('text/event-stream') && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let streamDone = false;
+
+        while (!streamDone) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+
+          for (const rawEvent of events) {
+            const lines = rawEvent.split('\n');
+            for (const line of lines) {
+              if (!line.startsWith('data:')) continue;
+              const jsonStr = line.slice(5).trim();
+              if (!jsonStr) continue;
+              let payload: { text?: string; done?: boolean; error?: string };
+              try {
+                payload = JSON.parse(jsonStr) as { text?: string; done?: boolean; error?: string };
+              } catch {
+                continue;
+              }
+              if (payload.error) {
+                throw new Error(payload.error);
+              }
+              if (payload.text) {
+                accumulated += payload.text;
+                const snapshot = accumulated;
+                setMessages(prev =>
+                  prev.map(m => (m.id === assistantMsgId ? { ...m, text: snapshot } : m))
+                );
+              }
+              if (payload.done) {
+                streamDone = true;
+              }
+            }
+          }
+        }
+      } else {
+        const data = (await res.json()) as { text?: string; error?: string };
+        if (data?.error) {
+          throw new Error(data.error);
+        }
+        accumulated = data?.text || '';
+        if (accumulated) {
           setMessages(prev =>
             prev.map(m => (m.id === assistantMsgId ? { ...m, text: accumulated } : m))
           );
         }
-      });
+      }
+
+      // Non-streaming safety fallback if the SSE stream closed without emitting chunks
+      if (!accumulated.trim() && !controller.signal.aborted) {
+        const fallbackRes = await fetch('/api/support-chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: historyForApi,
+            context: supportContext,
+            stream: false
+          }),
+          signal: controller.signal
+        });
+
+        if (fallbackRes.ok) {
+          const fallbackData = (await fallbackRes.json()) as { text?: string; error?: string };
+          if (fallbackData?.error) {
+            throw new Error(fallbackData.error);
+          }
+          if (fallbackData?.text?.trim()) {
+            accumulated = fallbackData.text;
+            setMessages(prev =>
+              prev.map(m => (m.id === assistantMsgId ? { ...m, text: accumulated } : m))
+            );
+          }
+        } else {
+          let fallbackErr = '';
+          try {
+            const errJson = (await fallbackRes.json()) as { error?: string };
+            fallbackErr = errJson?.error || '';
+          } catch {
+            fallbackErr = '';
+          }
+          throw new Error(
+            fallbackErr ||
+              (isBn
+                ? 'AI থেকে উত্তর পাওয়া যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।'
+                : 'Did not receive a response from AI. Please try again.')
+          );
+        }
+      }
+
+      if (!accumulated.trim()) {
+        throw new Error(
+          isBn
+            ? 'AI থেকে উত্তর পাওয়া যায়নি। অনুগ্রহ করে একটু পর আবার চেষ্টা করুন।'
+            : 'No response received from AI. Please try again in a moment.'
+        );
+      }
+
       playSound('success');
     } catch (err: unknown) {
       if ((err as { name?: string })?.name === 'AbortError') {
@@ -924,8 +1053,8 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
         const msg =
           (err as Error)?.message ||
           (isBn
-            ? 'নেটওয়ার্ক সমস্যার কারণে উত্তর পাওয়া যায়নি।'
-            : 'Network error while reaching AI Support.');
+            ? 'নেটওয়ার্ক সমস্যার কারণে উত্তর পাওয়া যায়নি। অনুগ্রহ করে আবার চেষ্টা করুন।'
+            : 'Network error while reaching AI Support. Please try again.');
         setLastFailedSubmission({ text: displayPrompt, attachments: attachmentsToSend });
         setMessages(prev =>
           prev.map(m => (m.id === assistantMsgId ? { ...m, text: msg, isError: true } : m))
@@ -1502,3 +1631,53 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
     </>
   );
 };
+
+interface SupportChatbotErrorBoundaryState {
+  hasError: boolean;
+}
+
+class SupportChatbotErrorBoundary extends Component<
+  SupportChatbotWidgetProps,
+  SupportChatbotErrorBoundaryState
+> {
+  state: SupportChatbotErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): SupportChatbotErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error): void {
+    console.error('[SupportChatbotWidget] Caught runtime error:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (!this.props.isOpenExternal) {
+        return null;
+      }
+      const isBn = this.props.language === 'bn';
+      return (
+        <div className="fixed bottom-20 right-4 z-[70] max-w-xs rounded-2xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-slate-900 p-4 shadow-xl text-sm text-slate-700 dark:text-slate-200 space-y-2">
+          <p className="font-medium text-rose-600 dark:text-rose-400">
+            {isBn
+              ? 'AI সাপোর্ট সাময়িকভাবে লোড করা যায়নি।'
+              : 'AI Support is temporarily unavailable.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => this.setState({ hasError: false })}
+            className="px-3 py-1.5 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold cursor-pointer"
+          >
+            {isBn ? 'আবার চেষ্টা করুন' : 'Retry'}
+          </button>
+        </div>
+      );
+    }
+    return <SupportChatbotWidgetInner {...this.props} />;
+  }
+}
+
+export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = props => (
+  <SupportChatbotErrorBoundary {...props} />
+);
+

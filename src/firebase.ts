@@ -43,7 +43,9 @@ import {
   FeedbackItem,
   SupportMessageItem,
   GiftCode,
-  AdsConfig
+  AdsConfig,
+  AdBoxKey,
+  TaskAdSlotKey
 } from './types';
 
 // Initialize Firebase App, Firestore (with provisioned named database ID & long-polling resilience), and Auth
@@ -1436,12 +1438,88 @@ export async function adminDeleteSupportMessage(messageId: string): Promise<void
 // ============================================================================
 // DYNAMIC ADS MANAGER CONFIGURATION (siteSettings/adsConfig)
 // ============================================================================
+export const ALL_AD_BOX_KEYS: AdBoxKey[] = [
+  'smartLink',
+  'banner300x250',
+  'banner468x60',
+  'banner160x300',
+  'banner160x600',
+  'banner320x50',
+  'banner728x90',
+  'nativeBanner',
+  'socialBar',
+  'popunder'
+];
+
+const VALID_AD_BOX_KEY_SET = new Set<string>(ALL_AD_BOX_KEYS);
+
+export const TASK_AD_SLOT_KEYS: TaskAdSlotKey[] = [
+  'banner300x250',
+  'banner468x60',
+  'banner160x300',
+  'banner160x600',
+  'banner320x50',
+  'banner728x90',
+  'nativeBanner'
+];
+
+const VALID_TASK_AD_SLOT_SET = new Set<string>(TASK_AD_SLOT_KEYS);
+
+function sanitizeAdCode(raw: unknown): string {
+  return typeof raw === 'string' ? raw.trim().slice(0, 20000) : '';
+}
+
+function sanitizeVisibleBoxes(raw: unknown): AdBoxKey[] {
+  if (!Array.isArray(raw)) {
+    return [...ALL_AD_BOX_KEYS];
+  }
+  const seen = new Set<AdBoxKey>();
+  for (const item of raw) {
+    if (typeof item === 'string' && VALID_AD_BOX_KEY_SET.has(item)) {
+      seen.add(item as AdBoxKey);
+    }
+  }
+  return Array.from(seen).slice(0, 10);
+}
+
+function sanitizeTaskAdInterval(raw: unknown): 2 | 3 {
+  return raw === 3 ? 3 : 2;
+}
+
+function sanitizeTaskAdSlot(raw: unknown): TaskAdSlotKey {
+  if (typeof raw === 'string' && VALID_TASK_AD_SLOT_SET.has(raw)) {
+    return raw as TaskAdSlotKey;
+  }
+  return 'banner300x250';
+}
+
 export const DEFAULT_ADS_CONFIG: AdsConfig = {
   adsEnabled: false,
   smartLinkEnabled: false,
   smartLinkUrl: '',
   bannerEnabled: false,
-  bannerCode: ''
+  bannerCode: '',
+  banner300x250Enabled: false,
+  banner300x250Code: '',
+  banner468x60Enabled: false,
+  banner468x60Code: '',
+  banner160x300Enabled: false,
+  banner160x300Code: '',
+  banner160x600Enabled: false,
+  banner160x600Code: '',
+  banner320x50Enabled: false,
+  banner320x50Code: '',
+  banner728x90Enabled: false,
+  banner728x90Code: '',
+  nativeBannerEnabled: false,
+  nativeBannerCode: '',
+  socialBarEnabled: false,
+  socialBarCode: '',
+  popunderEnabled: false,
+  popunderCode: '',
+  visibleBoxes: [...ALL_AD_BOX_KEYS],
+  taskAdInterval: 2,
+  taskAdSlot: 'banner300x250'
 };
 
 export function sanitizeExternalHttpUrl(rawUrl: string): string {
@@ -1473,15 +1551,40 @@ export async function saveAdsConfigToFirestore(config: AdsConfig): Promise<AdsCo
     }
   }
 
-  const cleanBannerCode = (config.bannerCode || '').trim().slice(0, 20000);
+  const clean300x250Code = sanitizeAdCode(config.banner300x250Code ?? config.bannerCode);
+  const enabled300x250 = Boolean(config.banner300x250Enabled ?? config.bannerEnabled);
+  const visibleBoxes = sanitizeVisibleBoxes(config.visibleBoxes);
+  const taskAdInterval = sanitizeTaskAdInterval(config.taskAdInterval);
+  const taskAdSlot = sanitizeTaskAdSlot(config.taskAdSlot);
 
   const payload = {
     id: 'adsConfig',
     adsEnabled: Boolean(config.adsEnabled),
     smartLinkEnabled: Boolean(config.smartLinkEnabled),
     smartLinkUrl: safeSmartUrl,
-    bannerEnabled: Boolean(config.bannerEnabled),
-    bannerCode: cleanBannerCode,
+    bannerEnabled: enabled300x250,
+    bannerCode: clean300x250Code,
+    banner300x250Enabled: enabled300x250,
+    banner300x250Code: clean300x250Code,
+    banner468x60Enabled: Boolean(config.banner468x60Enabled),
+    banner468x60Code: sanitizeAdCode(config.banner468x60Code),
+    banner160x300Enabled: Boolean(config.banner160x300Enabled),
+    banner160x300Code: sanitizeAdCode(config.banner160x300Code),
+    banner160x600Enabled: Boolean(config.banner160x600Enabled),
+    banner160x600Code: sanitizeAdCode(config.banner160x600Code),
+    banner320x50Enabled: Boolean(config.banner320x50Enabled),
+    banner320x50Code: sanitizeAdCode(config.banner320x50Code),
+    banner728x90Enabled: Boolean(config.banner728x90Enabled),
+    banner728x90Code: sanitizeAdCode(config.banner728x90Code),
+    nativeBannerEnabled: Boolean(config.nativeBannerEnabled),
+    nativeBannerCode: sanitizeAdCode(config.nativeBannerCode),
+    socialBarEnabled: Boolean(config.socialBarEnabled),
+    socialBarCode: sanitizeAdCode(config.socialBarCode),
+    popunderEnabled: Boolean(config.popunderEnabled),
+    popunderCode: sanitizeAdCode(config.popunderCode),
+    visibleBoxes,
+    taskAdInterval,
+    taskAdSlot,
     updatedBy: sanitizeId(adminUser.uid),
     updatedAt: serverTimestamp()
   };
@@ -1494,6 +1597,27 @@ export async function saveAdsConfigToFirestore(config: AdsConfig): Promise<AdsCo
       smartLinkUrl: payload.smartLinkUrl,
       bannerEnabled: payload.bannerEnabled,
       bannerCode: payload.bannerCode,
+      banner300x250Enabled: payload.banner300x250Enabled,
+      banner300x250Code: payload.banner300x250Code,
+      banner468x60Enabled: payload.banner468x60Enabled,
+      banner468x60Code: payload.banner468x60Code,
+      banner160x300Enabled: payload.banner160x300Enabled,
+      banner160x300Code: payload.banner160x300Code,
+      banner160x600Enabled: payload.banner160x600Enabled,
+      banner160x600Code: payload.banner160x600Code,
+      banner320x50Enabled: payload.banner320x50Enabled,
+      banner320x50Code: payload.banner320x50Code,
+      banner728x90Enabled: payload.banner728x90Enabled,
+      banner728x90Code: payload.banner728x90Code,
+      nativeBannerEnabled: payload.nativeBannerEnabled,
+      nativeBannerCode: payload.nativeBannerCode,
+      socialBarEnabled: payload.socialBarEnabled,
+      socialBarCode: payload.socialBarCode,
+      popunderEnabled: payload.popunderEnabled,
+      popunderCode: payload.popunderCode,
+      visibleBoxes: payload.visibleBoxes,
+      taskAdInterval: payload.taskAdInterval,
+      taskAdSlot: payload.taskAdSlot,
       updatedBy: payload.updatedBy,
       updatedAtMs: Date.now()
     };
@@ -1516,12 +1640,45 @@ export function subscribeAdsConfig(onUpdate: (config: AdsConfig) => void): () =>
       const updatedAtMs =
         typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined;
 
+      // Backward compatibility: fall back to legacy bannerEnabled / bannerCode for Banner 300x250
+      const resolved300x250Enabled =
+        typeof data.banner300x250Enabled === 'boolean'
+          ? data.banner300x250Enabled
+          : Boolean(data.bannerEnabled);
+      const resolved300x250Code =
+        typeof data.banner300x250Code === 'string'
+          ? data.banner300x250Code.slice(0, 20000)
+          : typeof data.bannerCode === 'string'
+            ? data.bannerCode.slice(0, 20000)
+            : '';
+
       onUpdate({
         adsEnabled: Boolean(data.adsEnabled),
         smartLinkEnabled: Boolean(data.smartLinkEnabled),
         smartLinkUrl: sanitizeExternalHttpUrl(rawUrl),
-        bannerEnabled: Boolean(data.bannerEnabled),
-        bannerCode: typeof data.bannerCode === 'string' ? data.bannerCode.slice(0, 20000) : '',
+        bannerEnabled: resolved300x250Enabled,
+        bannerCode: resolved300x250Code,
+        banner300x250Enabled: resolved300x250Enabled,
+        banner300x250Code: resolved300x250Code,
+        banner468x60Enabled: Boolean(data.banner468x60Enabled),
+        banner468x60Code: typeof data.banner468x60Code === 'string' ? data.banner468x60Code.slice(0, 20000) : '',
+        banner160x300Enabled: Boolean(data.banner160x300Enabled),
+        banner160x300Code: typeof data.banner160x300Code === 'string' ? data.banner160x300Code.slice(0, 20000) : '',
+        banner160x600Enabled: Boolean(data.banner160x600Enabled),
+        banner160x600Code: typeof data.banner160x600Code === 'string' ? data.banner160x600Code.slice(0, 20000) : '',
+        banner320x50Enabled: Boolean(data.banner320x50Enabled),
+        banner320x50Code: typeof data.banner320x50Code === 'string' ? data.banner320x50Code.slice(0, 20000) : '',
+        banner728x90Enabled: Boolean(data.banner728x90Enabled),
+        banner728x90Code: typeof data.banner728x90Code === 'string' ? data.banner728x90Code.slice(0, 20000) : '',
+        nativeBannerEnabled: Boolean(data.nativeBannerEnabled),
+        nativeBannerCode: typeof data.nativeBannerCode === 'string' ? data.nativeBannerCode.slice(0, 20000) : '',
+        socialBarEnabled: Boolean(data.socialBarEnabled),
+        socialBarCode: typeof data.socialBarCode === 'string' ? data.socialBarCode.slice(0, 20000) : '',
+        popunderEnabled: Boolean(data.popunderEnabled),
+        popunderCode: typeof data.popunderCode === 'string' ? data.popunderCode.slice(0, 20000) : '',
+        visibleBoxes: sanitizeVisibleBoxes(data.visibleBoxes),
+        taskAdInterval: sanitizeTaskAdInterval(data.taskAdInterval),
+        taskAdSlot: sanitizeTaskAdSlot(data.taskAdSlot),
         updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
         updatedAtMs
       });

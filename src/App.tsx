@@ -33,7 +33,12 @@ import { BottomNavBar } from './components/BottomNavBar';
 import { SpinWinModal } from './components/SpinWinModal';
 import { PolicyTrustModal, PolicyPageType } from './components/PolicyTrustModal';
 import { SupportChatbotWidget } from './components/SupportChatbotWidget';
-import { AdsterraBanner } from './components/AdsterraBanner';
+import {
+  AdsterraBanner,
+  AdsterraGlobalScripts,
+  TaskSubmissionAdModal,
+  resolveTaskSubmissionAdUnit
+} from './components/AdsterraBanner';
 
 import {
   auth,
@@ -159,7 +164,20 @@ export default function App() {
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [officialChannelOpen, setOfficialChannelOpen] = useState(false);
   const [supportChatOpen, setSupportChatOpen] = useState(false);
+  const [taskAdModalOpen, setTaskAdModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const TASK_SUBMISSION_COUNT_KEY = 'microearn_task_submission_count';
+  const [taskSubmissionCount, setTaskSubmissionCount] = useState<number>(() => {
+    try {
+      const saved = sessionStorage.getItem('microearn_task_submission_count');
+      const parsed = saved ? parseInt(saved, 10) : 0;
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  });
+  const taskSubmissionCountRef = useRef<number>(taskSubmissionCount);
 
   // Admin Session Token
   const [adminDeviceToken, setAdminDeviceToken] = useState<string | null>(null);
@@ -194,6 +212,23 @@ export default function App() {
       setToastMessage(prev => (prev === msg ? null : prev));
     }, 4000);
   }, []);
+
+  const handleTaskSubmitted = useCallback(() => {
+    const nextCount = taskSubmissionCountRef.current + 1;
+    taskSubmissionCountRef.current = nextCount;
+    setTaskSubmissionCount(nextCount);
+    try {
+      sessionStorage.setItem(TASK_SUBMISSION_COUNT_KEY, String(nextCount));
+    } catch {
+      // Ignore sessionStorage restriction errors
+    }
+
+    const interval = adsConfig.taskAdInterval === 3 ? 3 : 2;
+    const adUnit = resolveTaskSubmissionAdUnit(adsConfig);
+    if (nextCount >= interval && nextCount % interval === 0 && adUnit) {
+      setTaskAdModalOpen(true);
+    }
+  }, [adsConfig]);
 
   // Capture referral code from URL query parameter (e.g. ?ref=USER_ID)
   useEffect(() => {
@@ -1461,7 +1496,7 @@ export default function App() {
       </main>
 
       {/* Designated Non-Intrusive Banner Container (Policy-Safe: renders ONLY when enabled & non-empty) */}
-      {adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim().length > 0 && (
+      {adsConfig.adsEnabled && (
         <aside
           aria-label="Advertisement"
           className="relative z-0 max-w-5xl w-full mx-auto px-4 mt-4 mb-2 empty:hidden"
@@ -1469,6 +1504,7 @@ export default function App() {
           <AdsterraBanner adsConfig={adsConfig} language={language} />
         </aside>
       )}
+      {adsConfig.adsEnabled && <AdsterraGlobalScripts adsConfig={adsConfig} />}
 
       {/* Footer */}
       <Footer
@@ -1536,6 +1572,7 @@ export default function App() {
           onWinMathCoins={awardTaskCoins}
           onConvertCoins={handleConvertCoins}
           onShowToast={showToast}
+          onTaskSubmitted={handleTaskSubmitted}
           language={language}
         />
       )}
@@ -1553,6 +1590,7 @@ export default function App() {
           onWinQuizCoins={awardTaskCoins}
           onConvertCoins={handleConvertCoins}
           onShowToast={showToast}
+          onTaskSubmitted={handleTaskSubmitted}
           language={language}
           questions={quizQuestions}
           isLoading={quizLoading}
@@ -1575,6 +1613,17 @@ export default function App() {
           onWinCaptchaCoins={awardTaskCoins}
           onConvertCoins={handleConvertCoins}
           onShowToast={showToast}
+          onTaskSubmitted={handleTaskSubmitted}
+          language={language}
+        />
+      )}
+
+      {/* SUBMISSION-COUNTER TASK AD MODAL (Every 2 or 3 Math / Captcha / Quiz submissions) */}
+      {taskAdModalOpen && (
+        <TaskSubmissionAdModal
+          isOpen={taskAdModalOpen}
+          onClose={() => setTaskAdModalOpen(false)}
+          adsConfig={adsConfig}
           language={language}
         />
       )}

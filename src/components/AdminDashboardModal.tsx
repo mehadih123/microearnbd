@@ -24,6 +24,7 @@ import {
   MessageSquare,
   Send,
   Eye,
+  EyeOff,
   Check,
   LayoutDashboard,
   UserCheck,
@@ -47,7 +48,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, SupportMessageItem, GiftCode, AdsConfig } from '../types';
+import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, SupportMessageItem, GiftCode, AdsConfig, AdBoxKey, TaskAdSlotKey } from '../types';
 import { playSound } from '../utils/audio';
 import {
   auth,
@@ -58,6 +59,7 @@ import {
   deleteFirestoreGiftCode,
   toggleFirestoreGiftCode,
   getAdminPinFromFirestore,
+  ALL_AD_BOX_KEYS,
   DEFAULT_ADS_CONFIG,
   saveAdsConfigToFirestore,
   sanitizeExternalHttpUrl,
@@ -157,8 +159,73 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [adsEnabledDraft, setAdsEnabledDraft] = useState<boolean>(adsConfig.adsEnabled);
   const [smartLinkEnabledDraft, setSmartLinkEnabledDraft] = useState<boolean>(adsConfig.smartLinkEnabled);
   const [smartLinkUrlDraft, setSmartLinkUrlDraft] = useState<string>(adsConfig.smartLinkUrl);
-  const [bannerEnabledDraft, setBannerEnabledDraft] = useState<boolean>(adsConfig.bannerEnabled);
-  const [bannerCodeDraft, setBannerCodeDraft] = useState<string>(adsConfig.bannerCode);
+
+  const [banner300x250EnabledDraft, setBanner300x250EnabledDraft] = useState<boolean>(
+    adsConfig.banner300x250Enabled ?? adsConfig.bannerEnabled
+  );
+  const [banner300x250CodeDraft, setBanner300x250CodeDraft] = useState<string>(
+    adsConfig.banner300x250Code ?? adsConfig.bannerCode ?? ''
+  );
+  const [banner468x60EnabledDraft, setBanner468x60EnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.banner468x60Enabled)
+  );
+  const [banner468x60CodeDraft, setBanner468x60CodeDraft] = useState<string>(
+    adsConfig.banner468x60Code || ''
+  );
+  const [banner160x300EnabledDraft, setBanner160x300EnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.banner160x300Enabled)
+  );
+  const [banner160x300CodeDraft, setBanner160x300CodeDraft] = useState<string>(
+    adsConfig.banner160x300Code || ''
+  );
+  const [banner160x600EnabledDraft, setBanner160x600EnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.banner160x600Enabled)
+  );
+  const [banner160x600CodeDraft, setBanner160x600CodeDraft] = useState<string>(
+    adsConfig.banner160x600Code || ''
+  );
+  const [banner320x50EnabledDraft, setBanner320x50EnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.banner320x50Enabled)
+  );
+  const [banner320x50CodeDraft, setBanner320x50CodeDraft] = useState<string>(
+    adsConfig.banner320x50Code || ''
+  );
+  const [banner728x90EnabledDraft, setBanner728x90EnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.banner728x90Enabled)
+  );
+  const [banner728x90CodeDraft, setBanner728x90CodeDraft] = useState<string>(
+    adsConfig.banner728x90Code || ''
+  );
+  const [nativeBannerEnabledDraft, setNativeBannerEnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.nativeBannerEnabled)
+  );
+  const [nativeBannerCodeDraft, setNativeBannerCodeDraft] = useState<string>(
+    adsConfig.nativeBannerCode || ''
+  );
+  const [socialBarEnabledDraft, setSocialBarEnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.socialBarEnabled)
+  );
+  const [socialBarCodeDraft, setSocialBarCodeDraft] = useState<string>(
+    adsConfig.socialBarCode || ''
+  );
+  const [popunderEnabledDraft, setPopunderEnabledDraft] = useState<boolean>(
+    Boolean(adsConfig.popunderEnabled)
+  );
+  const [popunderCodeDraft, setPopunderCodeDraft] = useState<string>(
+    adsConfig.popunderCode || ''
+  );
+  const [visibleBoxesDraft, setVisibleBoxesDraft] = useState<AdBoxKey[]>(
+    adsConfig.visibleBoxes && adsConfig.visibleBoxes.length >= 0
+      ? adsConfig.visibleBoxes
+      : [...ALL_AD_BOX_KEYS]
+  );
+  const [taskAdIntervalDraft, setTaskAdIntervalDraft] = useState<2 | 3>(
+    adsConfig.taskAdInterval === 3 ? 3 : 2
+  );
+  const [taskAdSlotDraft, setTaskAdSlotDraft] = useState<TaskAdSlotKey>(
+    adsConfig.taskAdSlot || 'banner300x250'
+  );
+
   const [isSavingAds, setIsSavingAds] = useState<boolean>(false);
   const [adsNotice, setAdsNotice] = useState<{ text: string; isError: boolean } | null>(null);
 
@@ -167,8 +234,41 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     setAdsEnabledDraft(Boolean(adsConfig.adsEnabled));
     setSmartLinkEnabledDraft(Boolean(adsConfig.smartLinkEnabled));
     setSmartLinkUrlDraft(adsConfig.smartLinkUrl || '');
-    setBannerEnabledDraft(Boolean(adsConfig.bannerEnabled));
-    setBannerCodeDraft(adsConfig.bannerCode || '');
+    setBanner300x250EnabledDraft(Boolean(adsConfig.banner300x250Enabled ?? adsConfig.bannerEnabled));
+    setBanner300x250CodeDraft(adsConfig.banner300x250Code ?? adsConfig.bannerCode ?? '');
+    setBanner468x60EnabledDraft(Boolean(adsConfig.banner468x60Enabled));
+    setBanner468x60CodeDraft(adsConfig.banner468x60Code || '');
+    setBanner160x300EnabledDraft(Boolean(adsConfig.banner160x300Enabled));
+    setBanner160x300CodeDraft(adsConfig.banner160x300Code || '');
+    setBanner160x600EnabledDraft(Boolean(adsConfig.banner160x600Enabled));
+    setBanner160x600CodeDraft(adsConfig.banner160x600Code || '');
+    setBanner320x50EnabledDraft(Boolean(adsConfig.banner320x50Enabled));
+    setBanner320x50CodeDraft(adsConfig.banner320x50Code || '');
+    setBanner728x90EnabledDraft(Boolean(adsConfig.banner728x90Enabled));
+    setBanner728x90CodeDraft(adsConfig.banner728x90Code || '');
+    setNativeBannerEnabledDraft(Boolean(adsConfig.nativeBannerEnabled));
+    setNativeBannerCodeDraft(adsConfig.nativeBannerCode || '');
+    setSocialBarEnabledDraft(Boolean(adsConfig.socialBarEnabled));
+    setSocialBarCodeDraft(adsConfig.socialBarCode || '');
+    setPopunderEnabledDraft(Boolean(adsConfig.popunderEnabled));
+    setPopunderCodeDraft(adsConfig.popunderCode || '');
+
+    const initialVisible = new Set<AdBoxKey>(
+      Array.isArray(adsConfig.visibleBoxes) ? adsConfig.visibleBoxes : ALL_AD_BOX_KEYS
+    );
+    // Ensure boxes with existing saved data remain visible automatically
+    if ((adsConfig.smartLinkUrl || '').trim() || adsConfig.smartLinkEnabled) {
+      initialVisible.add('smartLink');
+    }
+    if (
+      (adsConfig.banner300x250Code ?? adsConfig.bannerCode ?? '').trim() ||
+      (adsConfig.banner300x250Enabled ?? adsConfig.bannerEnabled)
+    ) {
+      initialVisible.add('banner300x250');
+    }
+    setVisibleBoxesDraft(ALL_AD_BOX_KEYS.filter(k => initialVisible.has(k)));
+    setTaskAdIntervalDraft(adsConfig.taskAdInterval === 3 ? 3 : 2);
+    setTaskAdSlotDraft(adsConfig.taskAdSlot || 'banner300x250');
   }, [isOpen, adsConfig]);
 
   const handleSaveAdsSettings = async (e?: React.FormEvent) => {
@@ -185,12 +285,35 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       return;
     }
 
+    const trimmed300x250 = banner300x250CodeDraft.trim();
+
     const nextConfig: AdsConfig = {
       adsEnabled: adsEnabledDraft,
       smartLinkEnabled: smartLinkEnabledDraft,
       smartLinkUrl: trimmedUrl,
-      bannerEnabled: bannerEnabledDraft,
-      bannerCode: bannerCodeDraft.trim()
+      bannerEnabled: banner300x250EnabledDraft,
+      bannerCode: trimmed300x250,
+      banner300x250Enabled: banner300x250EnabledDraft,
+      banner300x250Code: trimmed300x250,
+      banner468x60Enabled: banner468x60EnabledDraft,
+      banner468x60Code: banner468x60CodeDraft.trim(),
+      banner160x300Enabled: banner160x300EnabledDraft,
+      banner160x300Code: banner160x300CodeDraft.trim(),
+      banner160x600Enabled: banner160x600EnabledDraft,
+      banner160x600Code: banner160x600CodeDraft.trim(),
+      banner320x50Enabled: banner320x50EnabledDraft,
+      banner320x50Code: banner320x50CodeDraft.trim(),
+      banner728x90Enabled: banner728x90EnabledDraft,
+      banner728x90Code: banner728x90CodeDraft.trim(),
+      nativeBannerEnabled: nativeBannerEnabledDraft,
+      nativeBannerCode: nativeBannerCodeDraft.trim(),
+      socialBarEnabled: socialBarEnabledDraft,
+      socialBarCode: socialBarCodeDraft.trim(),
+      popunderEnabled: popunderEnabledDraft,
+      popunderCode: popunderCodeDraft.trim(),
+      visibleBoxes: visibleBoxesDraft,
+      taskAdInterval: taskAdIntervalDraft,
+      taskAdSlot: taskAdSlotDraft
     };
 
     setIsSavingAds(true);
@@ -4424,227 +4547,455 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 </button>
               </div>
 
-              {/* Section 1: Smart Link / Direct Link URL */}
+              {/* Math / Captcha / Quiz Submission-Counter Ad Trigger Settings */}
               <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center shrink-0">
-                      <Link2 className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-sm text-white">
-                        ১. Smart Link / Direct Link URL
-                      </h4>
-                      <p className="text-[11px] text-slate-400">
-                        যেমন: Adsterra Smart Link — ড্যাশবোর্ড ও মাইক্রো-জবস সেকশনে "Sponsored / বিজ্ঞাপন" বাটন হিসেবে দেখাবে
-                      </p>
-                    </div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-bold text-sm text-white">
+                      টাস্ক সাবমিশন অ্যাড ট্রিগার (Math, Captcha &amp; Quiz)
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      প্রথম সাবমিশনে কোনো অ্যাড আসবে না; নির্ধারিত ২ বা ৩ সাবমিশন পর পর ব্যানার অ্যাড কার্ড প্রদর্শিত হবে।
+                    </p>
                   </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={smartLinkEnabledDraft}
-                      onClick={() => {
-                        playSound('click');
-                        setSmartLinkEnabledDraft(prev => !prev);
-                        setAdsNotice(null);
-                      }}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
-                        smartLinkEnabledDraft
-                          ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
-                          : 'bg-slate-900 border-slate-700 text-slate-400'
-                      }`}
-                    >
-                      <span>{smartLinkEnabledDraft ? 'চালু (ON)' : 'বন্ধ (OFF)'}</span>
-                      <span
-                        className={`w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
-                          smartLinkEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
-                        }`}
-                      >
-                        <span className="w-3 h-3 rounded-full bg-white" />
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playSound('click');
-                        setSmartLinkUrlDraft('');
-                        setSmartLinkEnabledDraft(false);
-                        setAdsNotice({
-                          text: 'Smart Link মুছে ফেলা হয়েছে। স্থায়ীভাবে আপডেট করতে নিচে "Save Ads Settings" ক্লিক করুন। / Smart Link cleared. Click Save Ads Settings to apply.',
-                          isError: false
-                        });
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Clear Smart Link"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>মুছুন / Clear</span>
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <input
-                    type="url"
-                    value={smartLinkUrlDraft}
-                    onChange={e => {
-                      setSmartLinkUrlDraft(e.target.value);
-                      if (adsNotice) setAdsNotice(null);
-                    }}
-                    placeholder="https://www.profitablecpmrate.com/..."
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-violet-500 text-xs sm:text-sm font-mono text-white outline-none"
-                  />
-                  {smartLinkUrlDraft.trim() && sanitizeExternalHttpUrl(smartLinkUrlDraft) && (
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-emerald-400 px-1">
-                      <span>✓ বৈধ URL ফরম্যাট শনাক্ত হয়েছে</span>
-                      <a
-                        href={sanitizeExternalHttpUrl(smartLinkUrlDraft)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-violet-300 hover:text-violet-200 underline"
-                      >
-                        <span>টেস্ট লিংক দেখুন</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Section 2: Banner / Native Banner Ad Code */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-3.5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0">
-                      <Code2 className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-sm text-white">
-                        ২. Banner / Native Banner Ad Code (HTML/Script)
-                      </h4>
-                      <p className="text-[11px] text-slate-400">
-                        Adsterra বা যেকোনো নেটওয়ার্কের HTML/Script ব্যানার কোড পেস্ট করুন — নিরাপদ স্যান্ডবক্সে নিচের সেকশনে প্রদর্শিত হবে
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={bannerEnabledDraft}
-                      onClick={() => {
-                        playSound('click');
-                        setBannerEnabledDraft(prev => !prev);
-                        setAdsNotice(null);
-                      }}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
-                        bannerEnabledDraft
-                          ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
-                          : 'bg-slate-900 border-slate-700 text-slate-400'
-                      }`}
-                    >
-                      <span>{bannerEnabledDraft ? 'চালু (ON)' : 'বন্ধ (OFF)'}</span>
-                      <span
-                        className={`w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
-                          bannerEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
-                        }`}
-                      >
-                        <span className="w-3 h-3 rounded-full bg-white" />
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playSound('click');
-                        setBannerCodeDraft('');
-                        setBannerEnabledDraft(false);
-                        setAdsNotice({
-                          text: 'ব্যানার অ্যাড কোড মুছে ফেলা হয়েছে। স্থায়ীভাবে আপডেট করতে নিচে "Save Ads Settings" ক্লিক করুন। / Banner code cleared. Click Save Ads Settings to apply.',
-                          isError: false
-                        });
-                      }}
-                      className="px-3 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Clear Banner Code"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>মুছুন / Clear</span>
-                    </button>
-                  </div>
-                </div>
-
-                <textarea
-                  rows={6}
-                  maxLength={20000}
-                  value={bannerCodeDraft}
-                  onChange={e => {
-                    setBannerCodeDraft(e.target.value);
-                    if (adsNotice) setAdsNotice(null);
-                  }}
-                  placeholder={'<script async="async" data-cfasync="false" src="//..."></script>\n<div id="container-..."></div>'}
-                  className="w-full px-3.5 py-3 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs font-mono text-cyan-100 outline-none leading-relaxed"
-                />
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span>অক্ষর সংখ্যা: {bannerCodeDraft.trim().length} / 20,000</span>
-                  <span>Math / Quiz / Captcha প্রশ্নের ওপর কখনোই জোরপূর্বক অ্যাড দেখানো হবে না</span>
-                </div>
-              </div>
-
-              {/* Feedback Message */}
-              {adsNotice && (
-                <div
-                  className={`p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-start gap-2.5 ${
-                    adsNotice.isError
-                      ? 'bg-rose-950/60 border-rose-700 text-rose-300'
-                      : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
-                  }`}
-                >
-                  {adsNotice.isError ? (
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  ) : (
-                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
-                  )}
-                  <span>{adsNotice.text}</span>
-                </div>
-              )}
-
-              {/* Save Action Bar */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
-                <div className="text-xs text-slate-400">
-                  লাইভ স্ট্যাটাস:{' '}
-                  <strong className={adsConfig.adsEnabled ? 'text-emerald-400' : 'text-slate-300'}>
-                    {adsConfig.adsEnabled ? 'সক্রিয় (ON)' : 'বন্ধ (OFF)'}
-                  </strong>
-                  {' · '}
-                  Smart Link:{' '}
-                  <strong className={adsConfig.adsEnabled && adsConfig.smartLinkEnabled && adsConfig.smartLinkUrl ? 'text-amber-400' : 'text-slate-400'}>
-                    {adsConfig.adsEnabled && adsConfig.smartLinkEnabled && adsConfig.smartLinkUrl ? 'Live' : 'Hidden'}
-                  </strong>
-                  {' · '}
-                  Banner:{' '}
-                  <strong className={adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim() ? 'text-cyan-400' : 'text-slate-400'}>
-                    {adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim() ? 'Live' : 'Hidden'}
-                  </strong>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSavingAds}
-                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-violet-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>
-                    {isSavingAds
-                      ? 'সেভ হচ্ছে... (Saving...)'
-                      : 'Save Ads Settings (অ্যাড সেটিংস সেভ করুন)'}
+                  <span className="px-2.5 py-1 rounded-lg bg-violet-500/20 border border-violet-500/40 text-[11px] font-bold text-violet-200 self-start sm:self-center shrink-0">
+                    Every {taskAdIntervalDraft} Submissions
                   </span>
-                </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {/* Interval Toggle (2 or 3) */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-300">
+                      অ্যাড দেখানোর ব্যবধান (Submission Interval)
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([2, 3] as const).map(val => {
+                        const selected = taskAdIntervalDraft === val;
+                        return (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => {
+                              playSound('click');
+                              setTaskAdIntervalDraft(val);
+                              setAdsNotice(null);
+                            }}
+                            className={`px-3 py-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                              selected
+                                ? 'bg-violet-600/30 border-violet-500 text-white shadow-sm'
+                                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {val === 2 ? 'প্রতি ২ বার পর (Default)' : 'প্রতি ৩ বার পর'}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Selected Banner Format */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-slate-300">
+                      টাস্ক অ্যাড ব্যানার ইউনিট (Selected Banner Unit)
+                    </label>
+                    <select
+                      value={taskAdSlotDraft}
+                      onChange={e => {
+                        setTaskAdSlotDraft(e.target.value as TaskAdSlotKey);
+                        setAdsNotice(null);
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-violet-500 text-xs sm:text-sm font-bold text-white outline-none cursor-pointer"
+                    >
+                      <option value="banner300x250">Banner 300x250 (Default)</option>
+                      <option value="banner468x60">Banner 468x60</option>
+                      <option value="banner320x50">Banner 320x50</option>
+                      <option value="banner728x90">Banner 728x90</option>
+                      <option value="banner160x300">Banner 160x300</option>
+                      <option value="banner160x600">Banner 160x600</option>
+                      <option value="nativeBanner">Native Banner</option>
+                    </select>
+                  </div>
+                </div>
               </div>
+
+              {/* Add / Show & Remove / Hide Box Control Bar */}
+              {(() => {
+                const adBoxMeta: Array<{
+                  key: AdBoxKey;
+                  label: string;
+                  isUrl?: boolean;
+                  placeholder: string;
+                  enabled: boolean;
+                  setEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+                  value: string;
+                  setValue: React.Dispatch<React.SetStateAction<string>>;
+                }> = [
+                  {
+                    key: 'smartLink',
+                    label: 'Smart Link',
+                    isUrl: true,
+                    placeholder: 'https://www.profitablecpmrate.com/...',
+                    enabled: smartLinkEnabledDraft,
+                    setEnabled: setSmartLinkEnabledDraft,
+                    value: smartLinkUrlDraft,
+                    setValue: setSmartLinkUrlDraft
+                  },
+                  {
+                    key: 'banner300x250',
+                    label: 'Banner 300x250',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 250, \'width\': 300 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner300x250EnabledDraft,
+                    setEnabled: setBanner300x250EnabledDraft,
+                    value: banner300x250CodeDraft,
+                    setValue: setBanner300x250CodeDraft
+                  },
+                  {
+                    key: 'banner468x60',
+                    label: 'Banner 468x60',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 60, \'width\': 468 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner468x60EnabledDraft,
+                    setEnabled: setBanner468x60EnabledDraft,
+                    value: banner468x60CodeDraft,
+                    setValue: setBanner468x60CodeDraft
+                  },
+                  {
+                    key: 'banner160x300',
+                    label: 'Banner 160x300',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 300, \'width\': 160 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner160x300EnabledDraft,
+                    setEnabled: setBanner160x300EnabledDraft,
+                    value: banner160x300CodeDraft,
+                    setValue: setBanner160x300CodeDraft
+                  },
+                  {
+                    key: 'banner160x600',
+                    label: 'Banner 160x600',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 600, \'width\': 160 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner160x600EnabledDraft,
+                    setEnabled: setBanner160x600EnabledDraft,
+                    value: banner160x600CodeDraft,
+                    setValue: setBanner160x600CodeDraft
+                  },
+                  {
+                    key: 'banner320x50',
+                    label: 'Banner 320x50',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 50, \'width\': 320 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner320x50EnabledDraft,
+                    setEnabled: setBanner320x50EnabledDraft,
+                    value: banner320x50CodeDraft,
+                    setValue: setBanner320x50CodeDraft
+                  },
+                  {
+                    key: 'banner728x90',
+                    label: 'Banner 728x90',
+                    placeholder: '<script type="text/javascript">atOptions = { ... \'height\': 90, \'width\': 728 };</script>\n<script type="text/javascript" src="..."></script>',
+                    enabled: banner728x90EnabledDraft,
+                    setEnabled: setBanner728x90EnabledDraft,
+                    value: banner728x90CodeDraft,
+                    setValue: setBanner728x90CodeDraft
+                  },
+                  {
+                    key: 'nativeBanner',
+                    label: 'Native Banner',
+                    placeholder: '<script async="async" data-cfasync="false" src="//..."></script>\n<div id="container-..."></div>',
+                    enabled: nativeBannerEnabledDraft,
+                    setEnabled: setNativeBannerEnabledDraft,
+                    value: nativeBannerCodeDraft,
+                    setValue: setNativeBannerCodeDraft
+                  },
+                  {
+                    key: 'socialBar',
+                    label: 'Social Bar',
+                    placeholder: '<script type="text/javascript" src="//..."></script>',
+                    enabled: socialBarEnabledDraft,
+                    setEnabled: setSocialBarEnabledDraft,
+                    value: socialBarCodeDraft,
+                    setValue: setSocialBarCodeDraft
+                  },
+                  {
+                    key: 'popunder',
+                    label: 'Popunder',
+                    placeholder: '<script type="text/javascript" src="//..."></script>',
+                    enabled: popunderEnabledDraft,
+                    setEnabled: setPopunderEnabledDraft,
+                    value: popunderCodeDraft,
+                    setValue: setPopunderCodeDraft
+                  }
+                ];
+
+                const visibleSet = new Set<AdBoxKey>(visibleBoxesDraft);
+                const visibleBoxes = adBoxMeta.filter(b => visibleSet.has(b.key));
+                const hiddenBoxes = adBoxMeta.filter(b => !visibleSet.has(b.key));
+
+                const liveFormatLabels: string[] = [];
+                if (adsConfig.adsEnabled) {
+                  if (adsConfig.smartLinkEnabled && adsConfig.smartLinkUrl) liveFormatLabels.push('Smart Link');
+                  if ((adsConfig.banner300x250Enabled ?? adsConfig.bannerEnabled) && (adsConfig.banner300x250Code ?? adsConfig.bannerCode ?? '').trim()) liveFormatLabels.push('Banner 300x250');
+                  if (adsConfig.banner468x60Enabled && (adsConfig.banner468x60Code || '').trim()) liveFormatLabels.push('Banner 468x60');
+                  if (adsConfig.banner160x300Enabled && (adsConfig.banner160x300Code || '').trim()) liveFormatLabels.push('Banner 160x300');
+                  if (adsConfig.banner160x600Enabled && (adsConfig.banner160x600Code || '').trim()) liveFormatLabels.push('Banner 160x600');
+                  if (adsConfig.banner320x50Enabled && (adsConfig.banner320x50Code || '').trim()) liveFormatLabels.push('Banner 320x50');
+                  if (adsConfig.banner728x90Enabled && (adsConfig.banner728x90Code || '').trim()) liveFormatLabels.push('Banner 728x90');
+                  if (adsConfig.nativeBannerEnabled && (adsConfig.nativeBannerCode || '').trim()) liveFormatLabels.push('Native Banner');
+                  if (adsConfig.socialBarEnabled && (adsConfig.socialBarCode || '').trim()) liveFormatLabels.push('Social Bar');
+                  if (adsConfig.popunderEnabled && (adsConfig.popunderCode || '').trim()) liveFormatLabels.push('Popunder');
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {/* Add / Show Box Panel */}
+                    <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-800/60 border border-slate-700/80 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
+                          <Plus className="w-4 h-4 text-violet-400" />
+                          <span>Add / Show Box ({visibleBoxes.length}/{adBoxMeta.length})</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {hiddenBoxes.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                playSound('click');
+                                setVisibleBoxesDraft([...ALL_AD_BOX_KEYS]);
+                                setAdsNotice(null);
+                              }}
+                              className="px-3 py-1 rounded-lg bg-violet-600/20 hover:bg-violet-600/35 border border-violet-500/40 text-violet-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Show All Boxes</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {hiddenBoxes.length > 0 ? (
+                        <div className="flex flex-wrap gap-2 pt-0.5">
+                          {hiddenBoxes.map(box => (
+                            <button
+                              key={box.key}
+                              type="button"
+                              onClick={() => {
+                                playSound('click');
+                                setVisibleBoxesDraft(prev =>
+                                  ALL_AD_BOX_KEYS.filter(k => prev.includes(k) || k === box.key)
+                                );
+                                setAdsNotice(null);
+                              }}
+                              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-violet-600/25 border border-slate-700 hover:border-violet-500/60 text-xs font-bold text-slate-200 hover:text-white flex items-center gap-1.5 cursor-pointer transition-colors"
+                            >
+                              <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                              <span>{box.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-400">
+                          সব {adBoxMeta.length}টি অ্যাড বক্স দেখানো হচ্ছে। অপ্রয়োজনীয় বক্সের "Remove / Hide Box" বাটনে ক্লিক করে লুকাতে পারবেন।
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Empty State if all boxes are hidden */}
+                    {visibleBoxes.length === 0 && (
+                      <div className="p-6 rounded-2xl bg-slate-800/40 border border-dashed border-slate-700 text-center space-y-2">
+                        <p className="text-xs text-slate-400">
+                          কোনো অ্যাড বক্স বর্তমানে প্রদর্শিত হচ্ছে না। উপরের "Add / Show Box" থেকে যেকোনো বক্স যোগ করুন।
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Dedicated Single-Format Ad Code Boxes */}
+                    {visibleBoxes.map(box => {
+                      const trimmedValue = box.value.trim();
+                      const validSmartUrl = box.isUrl && trimmedValue ? sanitizeExternalHttpUrl(trimmedValue) : '';
+                      return (
+                        <div
+                          key={box.key}
+                          className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-3.5"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <div
+                                className={`w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 ${
+                                  box.isUrl
+                                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                                    : 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                                }`}
+                              >
+                                {box.isUrl ? <Link2 className="w-4 h-4" /> : <Code2 className="w-4 h-4" />}
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-sm text-white">
+                                  {box.label}
+                                </h4>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={box.enabled}
+                                onClick={() => {
+                                  playSound('click');
+                                  box.setEnabled(prev => !prev);
+                                  setAdsNotice(null);
+                                }}
+                                className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors ${
+                                  box.enabled
+                                    ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
+                                    : 'bg-slate-900 border-slate-700 text-slate-400'
+                                }`}
+                              >
+                                <span>{box.enabled ? 'চালু (ON)' : 'বন্ধ (OFF)'}</span>
+                                <span
+                                  className={`w-8 h-4 rounded-full p-0.5 flex items-center transition-colors ${
+                                    box.enabled ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
+                                  }`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-white" />
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  playSound('click');
+                                  box.setValue('');
+                                  box.setEnabled(false);
+                                  setAdsNotice({
+                                    text: `${box.label} মুছে ফেলা হয়েছে। স্থায়ীভাবে আপডেট করতে নিচে "Save Ads Settings" ক্লিক করুন।`,
+                                    isError: false
+                                  });
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-rose-950/70 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-700/60 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                title={`Clear ${box.label}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Clear</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  playSound('click');
+                                  box.setEnabled(false);
+                                  setVisibleBoxesDraft(prev => prev.filter(k => k !== box.key));
+                                  setAdsNotice({
+                                    text: `${box.label} বক্সটি লুকানো হয়েছে। সংরক্ষণ করতে "Save Ads Settings" ক্লিক করুন।`,
+                                    isError: false
+                                  });
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-600/80 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                title={`Remove / Hide ${box.label} Box`}
+                              >
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>Remove / Hide Box</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {box.isUrl ? (
+                            <div className="space-y-1.5">
+                              <input
+                                type="url"
+                                value={box.value}
+                                onChange={e => {
+                                  box.setValue(e.target.value);
+                                  if (adsNotice) setAdsNotice(null);
+                                }}
+                                placeholder={box.placeholder}
+                                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-violet-500 text-xs sm:text-sm font-mono text-white outline-none"
+                              />
+                              {validSmartUrl && (
+                                <div className="flex items-center justify-between gap-2 text-[11px] text-emerald-400 px-1">
+                                  <span>✓ বৈধ URL ফরম্যাট শনাক্ত হয়েছে</span>
+                                  <a
+                                    href={validSmartUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 text-violet-300 hover:text-violet-200 underline"
+                                  >
+                                    <span>টেস্ট লিংক দেখুন</span>
+                                    <ExternalLink className="w-3 h-3" />
+                                  </a>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              <textarea
+                                rows={4}
+                                maxLength={20000}
+                                value={box.value}
+                                onChange={e => {
+                                  box.setValue(e.target.value);
+                                  if (adsNotice) setAdsNotice(null);
+                                }}
+                                placeholder={box.placeholder}
+                                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs font-mono text-cyan-100 outline-none leading-relaxed"
+                              />
+                              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                                <span>অক্ষর সংখ্যা: {trimmedValue.length} / 20,000</span>
+                                <span className={box.enabled && trimmedValue ? 'text-emerald-400 font-semibold' : 'text-slate-500'}>
+                                  {box.enabled && trimmedValue ? 'Ready for Live' : 'Inactive / Empty'}
+                                </span>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {/* Feedback Message */}
+                    {adsNotice && (
+                      <div
+                        className={`p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-start gap-2.5 ${
+                          adsNotice.isError
+                            ? 'bg-rose-950/60 border-rose-700 text-rose-300'
+                            : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                        }`}
+                      >
+                        {adsNotice.isError ? (
+                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                        )}
+                        <span>{adsNotice.text}</span>
+                      </div>
+                    )}
+
+                    {/* Save Action Bar */}
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                      <div className="text-xs text-slate-400">
+                        লাইভ স্ট্যাটাস:{' '}
+                        <strong className={adsConfig.adsEnabled ? 'text-emerald-400' : 'text-slate-300'}>
+                          {adsConfig.adsEnabled ? 'সক্রিয় (ON)' : 'বন্ধ (OFF)'}
+                        </strong>
+                        {' · '}
+                        Active:{' '}
+                        <strong className={liveFormatLabels.length > 0 ? 'text-cyan-400' : 'text-slate-400'}>
+                          {liveFormatLabels.length > 0 ? liveFormatLabels.join(', ') : 'None'}
+                        </strong>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isSavingAds}
+                        className="px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-violet-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                      >
+                        <Save className="w-4 h-4" />
+                        <span>
+                          {isSavingAds
+                            ? 'সেভ হচ্ছে... (Saving...)'
+                            : 'Save Ads Settings (অ্যাড সেটিংস সেভ করুন)'}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </form>
           )}
 

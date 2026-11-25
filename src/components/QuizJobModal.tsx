@@ -12,6 +12,7 @@ interface QuizJobModalProps {
   onWinQuizCoins: (coinsWon: number) => Promise<void> | void;
   onConvertCoins: () => Promise<void> | void;
   onShowToast: (msg: string) => void;
+  onTaskSubmitted?: () => void;
   language?: Language;
   questions?: QuizQuestion[];
   isLoading?: boolean;
@@ -29,6 +30,7 @@ export const QuizJobModal: React.FC<QuizJobModalProps> = ({
   onWinQuizCoins,
   onConvertCoins,
   onShowToast,
+  onTaskSubmitted,
   language = 'bn',
   questions: externalQuestions,
   isLoading: externalLoading,
@@ -134,6 +136,7 @@ export const QuizJobModal: React.FC<QuizJobModalProps> = ({
         });
         onShowToast(isBn ? `+${rewardCoins} কয়েন যোগ হয়েছে!` : `+${rewardCoins} Coins earned!`);
         advanceToNextQuestion(completedQuestionId);
+        onTaskSubmitted?.();
       } finally {
         if (isMountedRef.current) {
           setIsProcessingReward(false);
@@ -149,6 +152,7 @@ export const QuizJobModal: React.FC<QuizJobModalProps> = ({
           ? 'ভুল উত্তর! একই প্রশ্ন পুনরায় করার সুযোগ নেই — পরবর্তী নতুন প্রশ্ন লোড হয়েছে।'
           : 'Wrong answer! Penalty: skipped immediately to a new question.'
       });
+      onTaskSubmitted?.();
     }
   };
 

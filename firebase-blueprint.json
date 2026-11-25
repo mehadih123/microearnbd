@@ -993,6 +993,91 @@
           "type": "string",
           "maxLength": 20000
         },
+        "banner300x250Enabled": {
+          "type": "boolean"
+        },
+        "banner300x250Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "banner468x60Enabled": {
+          "type": "boolean"
+        },
+        "banner468x60Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "banner160x300Enabled": {
+          "type": "boolean"
+        },
+        "banner160x300Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "banner160x600Enabled": {
+          "type": "boolean"
+        },
+        "banner160x600Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "banner320x50Enabled": {
+          "type": "boolean"
+        },
+        "banner320x50Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "banner728x90Enabled": {
+          "type": "boolean"
+        },
+        "banner728x90Code": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "nativeBannerEnabled": {
+          "type": "boolean"
+        },
+        "nativeBannerCode": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "socialBarEnabled": {
+          "type": "boolean"
+        },
+        "socialBarCode": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "popunderEnabled": {
+          "type": "boolean"
+        },
+        "popunderCode": {
+          "type": "string",
+          "maxLength": 20000
+        },
+        "visibleBoxes": {
+          "type": "array"
+        },
+        "taskAdInterval": {
+          "type": "integer",
+          "enum": [2, 3],
+          "description": "Show task submission ad card every 2 or 3 Math/Captcha/Quiz submissions (default 2)."
+        },
+        "taskAdSlot": {
+          "type": "string",
+          "enum": [
+            "banner300x250",
+            "banner468x60",
+            "banner160x300",
+            "banner160x600",
+            "banner320x50",
+            "banner728x90",
+            "nativeBanner"
+          ],
+          "maxLength": 32,
+          "description": "Selected banner unit to show inside the task submission ad modal (default banner300x250)."
+        },
         "updatedBy": {
           "type": "string",
           "minLength": 1,

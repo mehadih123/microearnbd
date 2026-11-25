@@ -363,6 +363,11 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
   } | null>(null);
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const activeAssistantIdRef = useRef<string | null>(null);
+  const userScrolledUpRef = useRef(false);
+  const programmaticScrollUntilRef = useRef(0);
+  const prevMessageCountRef = useRef(messages.length);
   const abortControllerRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -478,10 +483,51 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
   }, [messages]);
 
   useEffect(() => {
-    if (isOpen && scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    if (!isOpen) return;
+    userScrolledUpRef.current = false;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const raf = requestAnimationFrame(() => {
+      programmaticScrollUntilRef.current = Date.now() + 250;
+      container.scrollTop = container.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !scrollContainerRef.current) return;
+    const container = scrollContainerRef.current;
+    const isNewMessageCount = messages.length !== prevMessageCountRef.current;
+    prevMessageCountRef.current = messages.length;
+
+    if (userScrolledUpRef.current) return;
+
+    const activeId = activeAssistantIdRef.current;
+    if (activeId) {
+      const assistantEl = messageRefs.current[activeId];
+      if (assistantEl) {
+        const maxAllowedScrollTop = Math.max(0, assistantEl.offsetTop - 16);
+        const maxScrollable = Math.max(0, container.scrollHeight - container.clientHeight);
+        const targetTop = Math.min(maxScrollable, maxAllowedScrollTop);
+        if (targetTop > container.scrollTop + 2) {
+          programmaticScrollUntilRef.current = Date.now() + 350;
+          container.scrollTo({
+            top: targetTop,
+            behavior: isNewMessageCount ? 'smooth' : 'auto',
+          });
+        }
+        return;
+      }
     }
-  }, [messages, isOpen, isStreaming, pendingAttachments]);
+
+    if (isNewMessageCount || pendingAttachments.length > 0) {
+      programmaticScrollUntilRef.current = Date.now() + 350;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
+  }, [messages, isOpen, pendingAttachments.length]);
 
   useEffect(() => {
     if (isOpen) {
@@ -747,6 +793,8 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
     playSound('click');
     stopGeneration();
     stopSpeech();
+    activeAssistantIdRef.current = null;
+    userScrolledUpRef.current = false;
     setSpeechNotice(null);
     setLastFailedSubmission(null);
     setPendingAttachments([]);
@@ -808,10 +856,10 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
       timestamp: formatTime()
     };
 
-    // Only send active base64 attachments for recent turns that actually hold data
+    // Only keep the last 6 non-error turns for fast context & low token latency
     const historyForApi = [...messages, userMsg]
       .filter(m => m.id !== 'welcome' && !m.isError)
-      .slice(-16)
+      .slice(-6)
       .map(m => ({
         role: m.role,
         text: m.text,
@@ -824,6 +872,8 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
           }))
       }));
 
+    userScrolledUpRef.current = false;
+    activeAssistantIdRef.current = assistantMsgId;
     setMessages(prev => [...prev, userMsg, placeholderAssistantMsg]);
     setIsStreaming(true);
 
@@ -1015,7 +1065,33 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
           {/* Message Feed — Generous spacing, comfortable medium typography, open Gemini layout */}
           <div
             ref={scrollContainerRef}
-            className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-5 py-5 space-y-7 bg-white dark:bg-[#131720]"
+            onScroll={() => {
+              const container = scrollContainerRef.current;
+              if (!container || Date.now() <= programmaticScrollUntilRef.current) return;
+              const distanceFromBottom =
+                container.scrollHeight - container.scrollTop - container.clientHeight;
+              if (activeAssistantIdRef.current) {
+                const activeEl = messageRefs.current[activeAssistantIdRef.current];
+                if (activeEl) {
+                  const maxAllowed = Math.max(0, activeEl.offsetTop - 16);
+                  const expectedTop = Math.min(
+                    Math.max(0, container.scrollHeight - container.clientHeight),
+                    maxAllowed
+                  );
+                  if (container.scrollTop < expectedTop - 24) {
+                    userScrolledUpRef.current = true;
+                    return;
+                  }
+                }
+              }
+              userScrolledUpRef.current = distanceFromBottom > 64;
+            }}
+            onWheel={e => {
+              if (e.deltaY < 0) {
+                userScrolledUpRef.current = true;
+              }
+            }}
+            className="relative flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 sm:px-5 py-5 space-y-7 bg-white dark:bg-[#131720]"
           >
             {messages.map(msg => {
               const isUser = msg.role === 'user';
@@ -1024,7 +1100,13 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
 
               if (isUser) {
                 return (
-                  <div key={msg.id} className="flex flex-col items-end gap-1.5">
+                  <div
+                    key={msg.id}
+                    ref={el => {
+                      messageRefs.current[msg.id] = el;
+                    }}
+                    className="flex flex-col items-end gap-1.5"
+                  >
                     <div className="max-w-[85%] min-w-0 rounded-[22px] rounded-br-md px-4 py-3 bg-[#f0f4f9] dark:bg-[#232a3b] text-slate-900 dark:text-slate-100 text-[16px] leading-[1.68] shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                       {msg.attachments && msg.attachments.length > 0 && (
                         <div className="mb-2.5 flex flex-wrap gap-2">
@@ -1059,7 +1141,13 @@ export const SupportChatbotWidget: React.FC<SupportChatbotWidgetProps> = ({
               }
 
               return (
-                <div key={msg.id} className="flex items-start gap-3">
+                <div
+                  key={msg.id}
+                  ref={el => {
+                    messageRefs.current[msg.id] = el;
+                  }}
+                  className="flex items-start gap-3"
+                >
                   <div
                     className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-1 ${
                       msg.isError

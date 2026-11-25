@@ -1464,7 +1464,7 @@ export default function App() {
       {adsConfig.adsEnabled && adsConfig.bannerEnabled && adsConfig.bannerCode.trim().length > 0 && (
         <aside
           aria-label="Advertisement"
-          className="relative z-0 max-w-5xl w-full mx-auto px-4 mt-4 mb-2"
+          className="relative z-0 max-w-5xl w-full mx-auto px-4 mt-4 mb-2 empty:hidden"
         >
           <AdsterraBanner adsConfig={adsConfig} language={language} />
         </aside>

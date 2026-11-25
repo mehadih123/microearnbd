@@ -977,7 +977,19 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
           }
         }
       } else {
-        const data = (await res.json()) as { text?: string; error?: string };
+        if (!contentType.includes('application/json')) {
+          throw new Error(
+            isBn
+              ? 'AI সার্ভার এন্ডপয়েন্ট সাড়া দিচ্ছে না। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।'
+              : 'AI service endpoint returned an unexpected response. Please try again shortly.'
+          );
+        }
+        let data: { text?: string; error?: string } | null = null;
+        try {
+          data = (await res.json()) as { text?: string; error?: string };
+        } catch {
+          data = null;
+        }
         if (data?.error) {
           throw new Error(data.error);
         }
@@ -1002,8 +1014,14 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
           signal: controller.signal
         });
 
-        if (fallbackRes.ok) {
-          const fallbackData = (await fallbackRes.json()) as { text?: string; error?: string };
+        const fallbackType = fallbackRes.headers.get('content-type') || '';
+        if (fallbackRes.ok && fallbackType.includes('application/json')) {
+          let fallbackData: { text?: string; error?: string } | null = null;
+          try {
+            fallbackData = (await fallbackRes.json()) as { text?: string; error?: string };
+          } catch {
+            fallbackData = null;
+          }
           if (fallbackData?.error) {
             throw new Error(fallbackData.error);
           }
@@ -1016,8 +1034,10 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
         } else {
           let fallbackErr = '';
           try {
-            const errJson = (await fallbackRes.json()) as { error?: string };
-            fallbackErr = errJson?.error || '';
+            if (fallbackType.includes('application/json')) {
+              const errJson = (await fallbackRes.json()) as { error?: string };
+              fallbackErr = errJson?.error || '';
+            }
           } catch {
             fallbackErr = '';
           }

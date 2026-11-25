@@ -72,7 +72,16 @@ function checkRateLimit(clientKey: string): boolean {
   return true;
 }
 
-function getGeminiClient(): GoogleGenAI | null {
+const GEMINI_API_MODELS = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL] as const;
+const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+
+interface GeminiClientContext {
+  ai: GoogleGenAI;
+  isVertexExpress: boolean;
+  models: readonly string[];
+}
+
+function getGeminiContext(): GeminiClientContext | null {
   const apiKey = (
     process.env.GEMINI_API_KEY ||
     process.env.GEMINIAPIKEY ||
@@ -82,14 +91,25 @@ function getGeminiClient(): GoogleGenAI | null {
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     return null;
   }
-  return new GoogleGenAI({
+
+  // Vertex AI Express Mode keys start with "AQ." and require vertexai: true (aiplatform.googleapis.com),
+  // whereas standard Google AI Studio Gemini API keys start with "AIza..." (generativelanguage.googleapis.com).
+  const isVertexExpress = apiKey.startsWith('AQ.');
+  const ai = new GoogleGenAI({
     apiKey,
+    ...(isVertexExpress ? { vertexai: true } : {}),
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
       },
     },
   });
+
+  return {
+    ai,
+    isVertexExpress,
+    models: isVertexExpress ? VERTEX_EXPRESS_MODELS : GEMINI_API_MODELS,
+  };
 }
 
 const MICROEARN_BASE_SYSTEM_INSTRUCTION = `You are the official **MicroEarn BD AI Architect, Platform Creator Assistant, Full-Stack Code/Layout Generator & Multimodal Customer Support** — fluently bilingual in **Bengali (বাংলা)** and **English**.
@@ -260,11 +280,11 @@ function isModelNotFoundError(err: unknown): boolean {
 }
 
 async function createStreamWithRetry(
-  ai: GoogleGenAI,
+  gemini: GeminiClientContext,
   systemInstruction: string,
   contents: Content[]
 ) {
-  const modelsToTry = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
+  const modelsToTry = gemini.models;
   let lastError: unknown;
 
   for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
@@ -274,7 +294,7 @@ async function createStreamWithRetry(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        return await ai.models.generateContentStream({
+        return await gemini.ai.models.generateContentStream({
           model: modelName,
           contents,
           config: {
@@ -307,18 +327,18 @@ async function createStreamWithRetry(
 }
 
 async function generateOnceWithFallback(
-  ai: GoogleGenAI,
+  gemini: GeminiClientContext,
   systemInstruction: string,
   contents: Content[]
 ) {
-  const modelsToTry = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL];
+  const modelsToTry = gemini.models;
   let lastError: unknown;
 
   for (let mIdx = 0; mIdx < modelsToTry.length; mIdx++) {
     const modelName = modelsToTry[mIdx];
     const hasNextModel = mIdx < modelsToTry.length - 1;
     try {
-      return await ai.models.generateContent({
+      return await gemini.ai.models.generateContent({
         model: modelName,
         contents,
         config: {
@@ -348,20 +368,34 @@ function classifyGeminiError(err: unknown, language?: 'bn' | 'en'): { status: nu
   const lower = rawMessage.toLowerCase();
   const status = (err as { status?: number })?.status;
 
-  if (status === 400 || lower.includes('api_key_invalid') || lower.includes('api key not valid')) {
+  if (
+    status === 400 ||
+    status === 401 ||
+    lower.includes('api_key_invalid') ||
+    lower.includes('api key not valid') ||
+    lower.includes('invalid api key')
+  ) {
     return {
       status: 400,
       message: isBn
-        ? 'AI সাপোর্ট কীটি সঠিক নয়। অনুগ্রহ করে Settings > Secrets-এ সঠিক GEMINI_API_KEY সেট করুন।'
-        : 'AI service configuration needs a valid GEMINI_API_KEY in Settings > Secrets.',
+        ? 'AI সাপোর্ট কীটি সঠিক নয় বা মেয়াদোত্তীর্ণ। অনুগ্রহ করে Settings > Secrets (অথবা Cloudflare Secrets)-এ সঠিক GEMINI_API_KEY সেট করুন।'
+        : 'The configured GEMINI_API_KEY was rejected by the AI endpoint. Please verify your key in Settings > Secrets.',
     };
   }
   if (status === 403 || lower.includes('permission_denied')) {
     return {
       status: 403,
       message: isBn
-        ? 'Gemini API পারমিশন পাওয়া যায়নি। Settings > Secrets-এ GEMINI_API_KEY যাচাই করুন।'
-        : 'AI service permission denied. Please verify your GEMINI_API_KEY in Settings > Secrets.',
+        ? 'API কীটির পারমিশন পাওয়া যায়নি। Settings > Secrets (অথবা Cloudflare Secrets)-এ GEMINI_API_KEY ও এন্ডপয়েন্ট অ্যাক্সেস যাচাই করুন।'
+        : 'AI service permission denied. Please verify your GEMINI_API_KEY permissions in Settings > Secrets.',
+    };
+  }
+  if (isModelNotFoundError(err)) {
+    return {
+      status: 404,
+      message: isBn
+        ? 'নির্বাচিত AI মডেলটি এই কী/এন্ডপয়েন্টে সাপোর্টেড নয়। অনুগ্রহ করে একটু পর আবার চেষ্টা করুন।'
+        : 'The configured AI model is unavailable for this endpoint. Please try again shortly.',
     };
   }
   if (
@@ -394,12 +428,14 @@ async function startServer() {
   app.use(express.json({ limit: '16mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
+    const gemini = getGeminiContext();
     res.json({
       ok: true,
       service: 'microearnbd-support-api',
-      model: GEMINI_MODEL,
+      endpoint: gemini?.isVertexExpress ? 'vertex-express' : 'gemini-api',
+      model: gemini?.models[0] ?? GEMINI_MODEL,
       multimodal: true,
-      configured: Boolean(getGeminiClient()),
+      configured: Boolean(gemini),
     });
   });
 
@@ -464,8 +500,8 @@ async function startServer() {
     }
 
     const reqLang = body.context?.language === 'en' ? 'en' : 'bn';
-    const ai = getGeminiClient();
-    if (!ai) {
+    const gemini = getGeminiContext();
+    if (!gemini) {
       res.status(503).json({
         error:
           reqLang === 'en'
@@ -486,7 +522,7 @@ async function startServer() {
 
     if (!wantsStream) {
       try {
-        const result = await generateOnceWithFallback(ai, systemInstruction, contents);
+        const result = await generateOnceWithFallback(gemini, systemInstruction, contents);
         res.json({ text: result.text ?? '' });
       } catch (err: unknown) {
         const mapped = classifyGeminiError(err, reqLang);
@@ -506,7 +542,7 @@ async function startServer() {
     });
 
     try {
-      const stream = await createStreamWithRetry(ai, systemInstruction, contents);
+      const stream = await createStreamWithRetry(gemini, systemInstruction, contents);
       for await (const chunk of stream) {
         if (clientClosed) break;
         const delta = chunk.text;

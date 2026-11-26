@@ -249,3 +249,13 @@ export interface AdsConfig {
   updatedBy?: string;
 }
 
+export type AiSupportProvider = 'gemini' | 'groq' | 'openrouter';
+
+export interface AiSupportAdminConfig {
+  enabled: boolean;
+  provider: AiSupportProvider;
+  apiKey: string;
+  updatedBy?: string;
+  updatedAtMs?: number;
+}
+

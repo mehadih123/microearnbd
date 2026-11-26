@@ -416,6 +416,28 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidAiSupportSecret(data) {
+      return data.keys().hasAll(['id', 'enabled', 'provider', 'apiKey', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'enabled', 'provider', 'apiKey', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id)
+        && data.enabled is bool
+        && data.provider is string && data.provider.size() <= 24 && data.provider in ['gemini', 'groq', 'openrouter']
+        && data.apiKey is string && data.apiKey.size() <= 512
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAiPublicStatus(data) {
+      return data.keys().hasAll(['id', 'enabled', 'provider', 'hasKey', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'enabled', 'provider', 'hasKey', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id)
+        && data.enabled is bool
+        && data.provider is string && data.provider.size() <= 24 && data.provider in ['gemini', 'groq', 'openrouter']
+        && data.hasKey is bool
+        && isValidId(data.updatedBy)
+        && data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // COLLECTION 1: /admins/{adminId}
     // =========================================================================
@@ -930,44 +952,85 @@ service cloud.firestore {
     }
 
     // =========================================================================
-    // COLLECTION 13: /siteSettings/{settingId} (Dynamic Ads Config)
+    // COLLECTION 13: /siteSettings/{settingId} (Dynamic Ads Config & Non-Secret AI Status)
     // =========================================================================
     match /siteSettings/{settingId} {
-      allow get: if isValidId(settingId) && (settingId == 'adsConfig' || isAdmin());
+      allow get: if isValidId(settingId) && (settingId == 'adsConfig' || settingId == 'aiStatus' || isAdmin());
       allow list: if false;
 
       allow create: if isVerifiedUser()
         && isValidId(settingId)
-        && settingId == 'adsConfig'
-        && isValidAdsConfig(incoming())
         && incoming().id == settingId
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && (
+          (settingId == 'adsConfig' && isValidAdsConfig(incoming())) ||
+          (settingId == 'aiStatus' && isValidAiPublicStatus(incoming()))
+        );
+
+      allow update: if isVerifiedUser()
+        && isValidId(settingId)
+        && incoming().id == existing().id
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time
+        && isAdmin()
+        && (
+          (settingId == 'adsConfig'
+            && isValidAdsConfig(incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
+              'bannerEnabled', 'bannerCode',
+              'banner300x250Enabled', 'banner300x250Code',
+              'banner468x60Enabled', 'banner468x60Code',
+              'banner160x300Enabled', 'banner160x300Code',
+              'banner160x600Enabled', 'banner160x600Code',
+              'banner320x50Enabled', 'banner320x50Code',
+              'banner728x90Enabled', 'banner728x90Code',
+              'nativeBannerEnabled', 'nativeBannerCode',
+              'socialBarEnabled', 'socialBarCode',
+              'popunderEnabled', 'popunderCode',
+              'visibleBoxes',
+              'taskAdInterval', 'taskAdSlot',
+              'updatedBy', 'updatedAt'
+            ]))
+          ||
+          (settingId == 'aiStatus'
+            && isValidAiPublicStatus(incoming())
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'enabled', 'provider', 'hasKey', 'updatedBy', 'updatedAt'
+            ]))
+        );
+
+      allow delete: if false;
+    }
+
+    // =========================================================================
+    // COLLECTION 14: /admin_secrets/{secretId} (Admin-Only AI Provider & API Key Secrets)
+    // =========================================================================
+    match /admin_secrets/{secretId} {
+      allow get: if isSignedIn() && isValidId(secretId) && isAdmin();
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(secretId)
+        && secretId == 'ai_support'
+        && isValidAiSupportSecret(incoming())
+        && incoming().id == secretId
         && incoming().updatedBy == request.auth.uid
         && incoming().updatedAt == request.time
         && isAdmin();
 
       allow update: if isVerifiedUser()
-        && isValidId(settingId)
-        && settingId == 'adsConfig'
-        && isValidAdsConfig(incoming())
+        && isValidId(secretId)
+        && secretId == 'ai_support'
+        && isValidAiSupportSecret(incoming())
         && incoming().id == existing().id
         && incoming().updatedBy == request.auth.uid
         && incoming().updatedAt == request.time
         && isAdmin()
         && incoming().diff(existing()).affectedKeys().hasOnly([
-          'adsEnabled', 'smartLinkEnabled', 'smartLinkUrl',
-          'bannerEnabled', 'bannerCode',
-          'banner300x250Enabled', 'banner300x250Code',
-          'banner468x60Enabled', 'banner468x60Code',
-          'banner160x300Enabled', 'banner160x300Code',
-          'banner160x600Enabled', 'banner160x600Code',
-          'banner320x50Enabled', 'banner320x50Code',
-          'banner728x90Enabled', 'banner728x90Code',
-          'nativeBannerEnabled', 'nativeBannerCode',
-          'socialBarEnabled', 'socialBarCode',
-          'popunderEnabled', 'popunderCode',
-          'visibleBoxes',
-          'taskAdInterval', 'taskAdSlot',
-          'updatedBy', 'updatedAt'
+          'enabled', 'provider', 'apiKey', 'updatedBy', 'updatedAt'
         ]);
 
       allow delete: if false;

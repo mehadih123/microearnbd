@@ -45,10 +45,11 @@ import {
   Megaphone,
   Link2,
   Code2,
-  ExternalLink
+  ExternalLink,
+  Bot
 } from 'lucide-react';
 import { collection, onSnapshot } from 'firebase/firestore';
-import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, SupportMessageItem, GiftCode, AdsConfig, AdBoxKey, TaskAdSlotKey } from '../types';
+import { Product, Order, MicroJob, TaskProofSubmission, Language, UserAccount, WithdrawalRequest, FeedbackItem, SupportMessageItem, GiftCode, AdsConfig, AdBoxKey, TaskAdSlotKey, AiSupportProvider, AiSupportAdminConfig } from '../types';
 import { playSound } from '../utils/audio';
 import {
   auth,
@@ -63,6 +64,9 @@ import {
   DEFAULT_ADS_CONFIG,
   saveAdsConfigToFirestore,
   sanitizeExternalHttpUrl,
+  DEFAULT_AI_SUPPORT_CONFIG,
+  getAiSupportConfigFromFirestore,
+  saveAiSupportConfigToFirestore,
   db
 } from '../firebase';
 
@@ -153,7 +157,17 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   language
 }) => {
   const isBn = language === 'bn';
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'active_users' | 'blocked_users' | 'appeals' | 'complaints' | 'support_messages' | 'ads_manager' | 'withdrawals' | 'orders' | 'products' | 'jobs_proofs' | 'live_users' | 'gift_codes' | 'history_archive'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'active_users' | 'blocked_users' | 'appeals' | 'complaints' | 'support_messages' | 'ads_manager' | 'ai_support_settings' | 'withdrawals' | 'orders' | 'products' | 'jobs_proofs' | 'live_users' | 'gift_codes' | 'history_archive'>('dashboard');
+
+  // AI Support Settings (admin_secrets/ai_support) Form State
+  const [aiSavedStatus, setAiSavedStatus] = useState<AiSupportAdminConfig>(DEFAULT_AI_SUPPORT_CONFIG);
+  const [aiEnabledDraft, setAiEnabledDraft] = useState<boolean>(true);
+  const [aiProviderDraft, setAiProviderDraft] = useState<AiSupportProvider>('gemini');
+  const [aiApiKeyDraft, setAiApiKeyDraft] = useState<string>('');
+  const [showAiApiKey, setShowAiApiKey] = useState<boolean>(false);
+  const [isLoadingAiSettings, setIsLoadingAiSettings] = useState<boolean>(false);
+  const [isSavingAiSettings, setIsSavingAiSettings] = useState<boolean>(false);
+  const [aiNotice, setAiNotice] = useState<{ text: string; isError: boolean } | null>(null);
 
   // Ads Manager (siteSettings/adsConfig) Form State
   const [adsEnabledDraft, setAdsEnabledDraft] = useState<boolean>(adsConfig.adsEnabled);
@@ -337,6 +351,71 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       setAdsNotice({ text: message, isError: true });
     } finally {
       setIsSavingAds(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!isOpen || !isAuthorizedAdminUser(auth.currentUser)) return;
+    let cancelled = false;
+    setIsLoadingAiSettings(true);
+    getAiSupportConfigFromFirestore()
+      .then(cfg => {
+        if (cancelled) return;
+        setAiSavedStatus(cfg);
+        setAiEnabledDraft(Boolean(cfg.enabled));
+        setAiProviderDraft(cfg.provider);
+        setAiApiKeyDraft(cfg.apiKey || '');
+      })
+      .catch(() => {
+        // Keep defaults on transient fetch error
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingAiSettings(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const handleSaveAiSupportSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAiNotice(null);
+
+    const trimmedKey = aiApiKeyDraft.trim();
+    if (aiEnabledDraft && !trimmedKey) {
+      playSound('error');
+      setAiNotice({
+        text: 'অনুগ্রহ করে নির্বাচিত প্রোভাইডারের বৈধ API Key দিন অথবা চ্যাটবট সাময়িকভাবে বন্ধ (OFF) রেখে সেভ করুন। / Please enter an API key for the selected provider or disable AI Support before saving.',
+        isError: true
+      });
+      return;
+    }
+
+    setIsSavingAiSettings(true);
+    try {
+      const saved = await saveAiSupportConfigToFirestore({
+        enabled: aiEnabledDraft,
+        provider: aiProviderDraft,
+        apiKey: trimmedKey
+      });
+      setAiSavedStatus(saved);
+      setAiApiKeyDraft(saved.apiKey);
+      playSound('success');
+      setAiNotice({
+        text: saved.enabled
+          ? 'AI সাপোর্ট সেটিংস সফলভাবে সুরক্ষিত Firestore-এ সেভ হয়েছে! / AI Support settings saved securely to admin-only Firestore!'
+          : 'অ্যাডমিন দ্বারা MicroEarn BD AI Support বন্ধ করে সেভ করা হয়েছে। / MicroEarn BD AI Support disabled and saved!',
+        isError: false
+      });
+    } catch (err: unknown) {
+      playSound('error');
+      const message =
+        err instanceof Error && err.message && !err.message.startsWith('{')
+          ? err.message
+          : 'AI সাপোর্ট সেটিংস সেভ করতে সমস্যা হয়েছে। অনুগ্রহ করে অ্যাডমিন জিমেইল সেশন যাচাই করে আবার চেষ্টা করুন। / Failed to save AI Support settings.';
+      setAiNotice({ text: message, isError: true });
+    } finally {
+      setIsSavingAiSettings(false);
     }
   };
 
@@ -1128,7 +1207,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
                     মাস্টার কন্ট্রোল ও ব্যবস্থাপনা (Admin Management Actions)
                   </h4>
-                  <span className="text-[11px] text-purple-400 font-medium">১৩টি প্রধান বিভাগ</span>
+                  <span className="text-[11px] text-purple-400 font-medium">১৪টি প্রধান বিভাগ</span>
                 </div>
 
                 <div className="flex flex-col w-full space-y-2.5">
@@ -1554,6 +1633,48 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                         {adsConfig.adsEnabled ? 'Active' : 'Disabled'}
                       </span>
                       <span className="text-slate-500 group-hover:text-violet-400 text-lg transition-transform group-hover:translate-x-1">→</span>
+                    </div>
+                  </button>
+
+                  {/* 14. AI Support Settings Card */}
+                  <button
+                    onClick={() => {
+                      playSound('click');
+                      setAiNotice(null);
+                      setActiveTab('ai_support_settings');
+                    }}
+                    className="w-full p-4 rounded-2xl bg-gradient-to-r from-cyan-950/50 via-slate-800/90 to-indigo-950/40 hover:bg-slate-800 border border-cyan-500/40 hover:border-cyan-400 text-left transition-all cursor-pointer group flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 shadow-sm"
+                  >
+                    <div className="flex items-center gap-3.5">
+                      <div className="w-11 h-11 rounded-2xl bg-cyan-500/20 border border-cyan-500/50 text-cyan-300 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+                        <Bot className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="font-extrabold text-sm sm:text-base text-white group-hover:text-cyan-300 transition-colors">
+                            ১৪. AI সাপোর্ট সেটিংস (AI Support Settings)
+                          </h4>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                              aiSavedStatus.enabled
+                                ? 'bg-emerald-500 text-slate-950'
+                                : 'bg-rose-600 text-white'
+                            }`}
+                          >
+                            {aiSavedStatus.enabled ? 'ON • চালু' : 'OFF • বন্ধ'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          Cloudflare Secrets ছাড়াই ড্যাশবোর্ড থেকে Gemini, Groq বা OpenRouter AI প্রোভাইডার ও API Key সেট করুন
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="px-3 py-1 rounded-full bg-cyan-950 border border-cyan-700 text-cyan-300 text-xs font-bold font-mono uppercase">
+                        {aiSavedStatus.provider}
+                      </span>
+                      <span className="text-slate-500 group-hover:text-cyan-400 text-lg transition-transform group-hover:translate-x-1">→</span>
                     </div>
                   </button>
 
@@ -4996,6 +5117,215 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   </div>
                 );
               })()}
+            </form>
+          )}
+
+          {/* TAB: AI SUPPORT SETTINGS (admin_secrets/ai_support) */}
+          {activeTab === 'ai_support_settings' && (
+            <form onSubmit={handleSaveAiSupportSettings} className="space-y-5">
+              {/* Header */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-cyan-950/60 via-slate-900 to-indigo-950/50 border border-cyan-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-2xl bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 flex items-center justify-center shrink-0">
+                    <Bot className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-sm sm:text-base text-white flex items-center gap-2 flex-wrap">
+                      <span>AI Support Settings</span>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-black ${
+                          aiEnabledDraft
+                            ? 'bg-emerald-500 text-slate-950'
+                            : 'bg-rose-600 text-white'
+                        }`}
+                      >
+                        {aiEnabledDraft ? 'ON' : 'OFF'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Admin-only Firestore (<span className="font-mono text-cyan-300">admin_secrets/ai_support</span>) এর মাধ্যমে সরাসরি AI সাপোর্ট চ্যাটবট নিয়ন্ত্রণ করুন
+                    </p>
+                  </div>
+                </div>
+
+                {/* Enable / Disable Toggle Switch for MicroEarn BD AI Support */}
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={aiEnabledDraft}
+                  onClick={() => {
+                    playSound('click');
+                    setAiEnabledDraft(prev => !prev);
+                    setAiNotice(null);
+                  }}
+                  className={`px-4 py-2.5 rounded-xl border font-bold text-xs flex items-center gap-3 transition-all cursor-pointer shrink-0 ${
+                    aiEnabledDraft
+                      ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-300'
+                  }`}
+                >
+                  <span>
+                    {aiEnabledDraft
+                      ? 'MicroEarn BD AI Support: চালু (ON)'
+                      : 'MicroEarn BD AI Support: বন্ধ (OFF)'}
+                  </span>
+                  <span
+                    className={`w-11 h-6 rounded-full p-0.5 transition-colors flex items-center ${
+                      aiEnabledDraft ? 'bg-emerald-500 justify-end' : 'bg-slate-600 justify-start'
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-white shadow" />
+                  </span>
+                </button>
+              </div>
+
+              {/* Provider & API Key Card */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-800/75 border border-slate-700/80 space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h4 className="font-bold text-sm text-white">
+                      MicroEarn BD AI Support — Provider &amp; API Key
+                    </h4>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Cloudflare Secrets এডিট না করেই এখান থেকে Gemini, Groq বা OpenRouter প্রোভাইডার পরিবর্তন করতে পারবেন।
+                    </p>
+                  </div>
+                  {isLoadingAiSettings && (
+                    <span className="text-[11px] text-cyan-300 font-semibold">
+                      লোড হচ্ছে...
+                    </span>
+                  )}
+                </div>
+
+                {/* Provider Dropdown */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-300">
+                    AI Provider নির্বাচন করুন (Select AI Provider)
+                  </label>
+                  <select
+                    value={aiProviderDraft}
+                    onChange={e => {
+                      setAiProviderDraft(e.target.value as AiSupportProvider);
+                      setAiNotice(null);
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs sm:text-sm font-bold text-white outline-none cursor-pointer"
+                  >
+                    <option value="gemini">Google Gemini (AIzaSy...)</option>
+                    <option value="groq">Groq (Free Fast API)</option>
+                    <option value="openrouter">OpenRouter (Free Models)</option>
+                  </select>
+                </div>
+
+                {/* Password-Masked API Key Input with Show/Hide Toggle */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-slate-300">
+                      API Key ({aiProviderDraft === 'gemini' ? 'Google Gemini' : aiProviderDraft === 'groq' ? 'Groq' : 'OpenRouter'})
+                    </label>
+                    {aiApiKeyDraft.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playSound('click');
+                          setAiApiKeyDraft('');
+                          setAiNotice(null);
+                        }}
+                        className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Clear Key</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="relative flex items-center">
+                    <input
+                      type={showAiApiKey ? 'text' : 'password'}
+                      value={aiApiKeyDraft}
+                      onChange={e => {
+                        setAiApiKeyDraft(e.target.value);
+                        if (aiNotice) setAiNotice(null);
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={512}
+                      placeholder={
+                        aiProviderDraft === 'gemini'
+                          ? 'AIzaSy... বা AQ...'
+                          : aiProviderDraft === 'groq'
+                            ? 'gsk_...'
+                            : 'sk-or-v1-...'
+                      }
+                      className="w-full pl-3.5 pr-12 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs sm:text-sm font-mono text-cyan-100 outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playSound('click');
+                        setShowAiApiKey(prev => !prev);
+                      }}
+                      className="absolute right-2.5 p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                      aria-label={showAiApiKey ? 'Hide API Key' : 'Show API Key'}
+                      title={showAiApiKey ? 'API Key লুকান' : 'API Key দেখুন'}
+                    >
+                      {showAiApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    নিরাপত্তা নোট: এই API Key-টি শুধুমাত্র অ্যাডমিন-লকড <span className="font-mono text-cyan-300">admin_secrets/ai_support</span> ডকুমেন্টে সংরক্ষিত থাকে—সাধারণ ইউজার বা পাবলিক ব্রাউজার এটি পড়তে পারবে না।
+                  </p>
+                </div>
+              </div>
+
+              {/* Feedback Message */}
+              {aiNotice && (
+                <div
+                  className={`p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-start gap-2.5 ${
+                    aiNotice.isError
+                      ? 'bg-rose-950/60 border-rose-700 text-rose-300'
+                      : 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
+                  }`}
+                >
+                  {aiNotice.isError ? (
+                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                  )}
+                  <span>{aiNotice.text}</span>
+                </div>
+              )}
+
+              {/* Save Action Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-1">
+                <div className="text-xs text-slate-400">
+                  লাইভ স্ট্যাটাস:{' '}
+                  <strong className={aiSavedStatus.enabled ? 'text-emerald-400' : 'text-rose-400'}>
+                    {aiSavedStatus.enabled ? 'চালু (ON)' : 'বন্ধ (OFF)'}
+                  </strong>
+                  {' · '}
+                  Provider:{' '}
+                  <strong className="text-cyan-400 uppercase">{aiSavedStatus.provider}</strong>
+                  {' · '}
+                  Key:{' '}
+                  <strong className={aiSavedStatus.apiKey ? 'text-emerald-400' : 'text-amber-400'}>
+                    {aiSavedStatus.apiKey ? 'Saved in Firestore' : 'Env Fallback'}
+                  </strong>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSavingAiSettings}
+                  className="px-6 py-3 rounded-2xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs sm:text-sm shadow-lg shadow-cyan-600/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>
+                    {isSavingAiSettings
+                      ? 'সেভ হচ্ছে... (Saving...)'
+                      : 'Save AI Settings (AI সেটিংস সেভ করুন)'}
+                  </span>
+                </button>
+              </div>
             </form>
           )}
 

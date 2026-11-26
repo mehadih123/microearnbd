@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AppTab, Language, UserAccount } from '../types';
 import { playSound } from '../utils/audio';
+import { auth } from '../firebase';
 
 interface ChatAttachment {
   id: string;
@@ -888,9 +889,19 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
         publishedProductsCount
       };
 
+      const idToken = auth.currentUser
+        ? await auth.currentUser.getIdToken().catch(() => '')
+        : '';
+      const requestHeaders: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (idToken) {
+        requestHeaders.Authorization = `Bearer ${idToken}`;
+      }
+
       const res = await fetch('/api/support-chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: requestHeaders,
         body: JSON.stringify({
           messages: historyForApi,
           context: supportContext,
@@ -1005,7 +1016,7 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
       if (!accumulated.trim() && !controller.signal.aborted) {
         const fallbackRes = await fetch('/api/support-chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: requestHeaders,
           body: JSON.stringify({
             messages: historyForApi,
             context: supportContext,

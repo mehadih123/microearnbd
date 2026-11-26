@@ -45,7 +45,9 @@ import {
   GiftCode,
   AdsConfig,
   AdBoxKey,
-  TaskAdSlotKey
+  TaskAdSlotKey,
+  AiSupportProvider,
+  AiSupportAdminConfig
 } from './types';
 
 // Initialize Firebase App, Firestore (with provisioned named database ID & long-polling resilience), and Auth
@@ -1688,5 +1690,110 @@ export function subscribeAdsConfig(onUpdate: (config: AdsConfig) => void): () =>
       onUpdate(DEFAULT_ADS_CONFIG);
     }
   );
+}
+
+// ============================================================================
+// ADMIN-ONLY AI SUPPORT SETTINGS (admin_secrets/ai_support + siteSettings/aiStatus)
+// ============================================================================
+export const VALID_AI_PROVIDERS: ReadonlySet<AiSupportProvider> = new Set([
+  'gemini',
+  'groq',
+  'openrouter'
+]);
+
+export const DEFAULT_AI_SUPPORT_CONFIG: AiSupportAdminConfig = {
+  enabled: true,
+  provider: 'gemini',
+  apiKey: ''
+};
+
+export function sanitizeAiProvider(raw: unknown): AiSupportProvider {
+  if (typeof raw === 'string' && VALID_AI_PROVIDERS.has(raw as AiSupportProvider)) {
+    return raw as AiSupportProvider;
+  }
+  return 'gemini';
+}
+
+export async function getAiSupportConfigFromFirestore(): Promise<AiSupportAdminConfig> {
+  if (!isAuthorizedAdminUser()) {
+    return DEFAULT_AI_SUPPORT_CONFIG;
+  }
+  const secretRef = doc(db, 'admin_secrets', 'ai_support');
+  try {
+    const snap = await getDocWithOfflineRetry(secretRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return {
+        enabled: typeof data.enabled === 'boolean' ? data.enabled : true,
+        provider: sanitizeAiProvider(data.provider),
+        apiKey: typeof data.apiKey === 'string' ? data.apiKey.slice(0, 512) : '',
+        updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+        updatedAtMs:
+          typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined
+      };
+    }
+  } catch (error) {
+    console.warn('AI support secret config read notice:', error);
+  }
+
+  try {
+    const statusSnap = await getDocWithOfflineRetry(doc(db, 'siteSettings', 'aiStatus'));
+    if (statusSnap.exists()) {
+      const data = statusSnap.data();
+      return {
+        enabled: typeof data.enabled === 'boolean' ? data.enabled : true,
+        provider: sanitizeAiProvider(data.provider),
+        apiKey: '',
+        updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+        updatedAtMs:
+          typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined
+      };
+    }
+  } catch {
+    // Ignore fallback read notice
+  }
+
+  return DEFAULT_AI_SUPPORT_CONFIG;
+}
+
+export async function saveAiSupportConfigToFirestore(
+  config: AiSupportAdminConfig
+): Promise<AiSupportAdminConfig> {
+  const adminUser = assertAuthorizedAdmin();
+  const cleanProvider = sanitizeAiProvider(config.provider);
+  const cleanApiKey = (config.apiKey || '').trim().slice(0, 512);
+  const cleanEnabled = Boolean(config.enabled);
+  const adminUid = sanitizeId(adminUser.uid);
+
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'admin_secrets', 'ai_support'), {
+    id: 'ai_support',
+    enabled: cleanEnabled,
+    provider: cleanProvider,
+    apiKey: cleanApiKey,
+    updatedBy: adminUid,
+    updatedAt: serverTimestamp()
+  });
+  batch.set(doc(db, 'siteSettings', 'aiStatus'), {
+    id: 'aiStatus',
+    enabled: cleanEnabled,
+    provider: cleanProvider,
+    hasKey: Boolean(cleanApiKey),
+    updatedBy: adminUid,
+    updatedAt: serverTimestamp()
+  });
+
+  try {
+    await batch.commit();
+    return {
+      enabled: cleanEnabled,
+      provider: cleanProvider,
+      apiKey: cleanApiKey,
+      updatedBy: adminUid,
+      updatedAtMs: Date.now()
+    };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'admin_secrets/ai_support');
+  }
 }
 

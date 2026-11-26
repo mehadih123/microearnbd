@@ -10,15 +10,29 @@ const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const GEMINI_MODEL = 'gemini-4-hydrogen';
-const FALLBACK_GEMINI_MODEL = 'gemini-3.1-flash-lite';
 
-const ALLOWED_INLINE_MIMES = new Set([
+type AiProvider = 'gemini' | 'groq' | 'openrouter';
+
+const FIREBASE_PROJECT_ID = 'taskvaultbd';
+const FIRESTORE_DATABASE_ID = 'ai-studio-mehadiearnresell-16cf3cfa-0cf8-4ccc-8ae2-79dfaaa7b23b';
+const FIRESTORE_DOC_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents`;
+
+const GEMINI_API_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
+const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
+const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
+const GROQ_VISION_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile'] as const;
+const OPENROUTER_MODELS = ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free'] as const;
+
+const ALLOWED_IMAGE_MIMES = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
   'image/webp',
   'image/gif',
+]);
+
+const ALLOWED_INLINE_MIMES = new Set([
+  ...ALLOWED_IMAGE_MIMES,
   'application/pdf',
 ]);
 
@@ -72,43 +86,305 @@ function checkRateLimit(clientKey: string): boolean {
   return true;
 }
 
-const GEMINI_API_MODELS = [GEMINI_MODEL, FALLBACK_GEMINI_MODEL] as const;
-const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
-
-interface GeminiClientContext {
-  ai: GoogleGenAI;
-  isVertexExpress: boolean;
-  models: readonly string[];
+interface FirestoreDocFields {
+  enabled?: { booleanValue?: boolean };
+  provider?: { stringValue?: string };
+  apiKey?: { stringValue?: string };
+  hasKey?: { booleanValue?: boolean };
 }
 
-function getGeminiContext(): GeminiClientContext | null {
-  const apiKey = (
+interface ResolvedAiConfig {
+  enabled: boolean;
+  provider: AiProvider;
+  apiKey: string;
+  source: 'firestore_admin_secret' | 'env_fallback' | 'none';
+  disabledByAdmin: boolean;
+}
+
+class ProviderHttpError extends Error {
+  status: number;
+  provider: AiProvider;
+  rawBody?: string;
+
+  constructor(provider: AiProvider, status: number, message: string, rawBody?: string) {
+    super(message);
+    this.name = 'ProviderHttpError';
+    this.provider = provider;
+    this.status = status;
+    this.rawBody = rawBody;
+  }
+}
+
+let cachedServiceAccountToken: {
+  clientEmail: string;
+  accessToken: string;
+  expiresAtMs: number;
+} | null = null;
+
+function sanitizeProvider(raw: unknown): AiProvider {
+  if (raw === 'groq' || raw === 'openrouter' || raw === 'gemini') {
+    return raw;
+  }
+  return 'gemini';
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  return Buffer.from(bytes)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function base64UrlEncodeString(str: string): string {
+  return Buffer.from(str, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+function pemToArrayBuffer(pem: string): ArrayBuffer {
+  const clean = pem
+    .replace(/\\n/g, '\n')
+    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+    .replace(/-----END PRIVATE KEY-----/g, '')
+    .replace(/\s+/g, '');
+  const buf = Buffer.from(clean, 'base64');
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+}
+
+async function getServiceAccountAccessToken(): Promise<string | null> {
+  const rawJson = (
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+    ''
+  ).trim();
+  if (!rawJson) return null;
+
+  let creds: { client_email?: string; private_key?: string; token_uri?: string };
+  try {
+    creds = JSON.parse(rawJson) as {
+      client_email?: string;
+      private_key?: string;
+      token_uri?: string;
+    };
+  } catch {
+    return null;
+  }
+
+  const clientEmail = (creds.client_email || '').trim();
+  const privateKey = (creds.private_key || '').trim();
+  const tokenUri = (creds.token_uri || 'https://oauth2.googleapis.com/token').trim();
+  if (!clientEmail || !privateKey) return null;
+
+  const nowMs = Date.now();
+  if (
+    cachedServiceAccountToken &&
+    cachedServiceAccountToken.clientEmail === clientEmail &&
+    cachedServiceAccountToken.expiresAtMs - 60_000 > nowMs
+  ) {
+    return cachedServiceAccountToken.accessToken;
+  }
+
+  try {
+    const iat = Math.floor(nowMs / 1000);
+    const exp = iat + 3600;
+    const header = base64UrlEncodeString(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+    const payload = base64UrlEncodeString(
+      JSON.stringify({
+        iss: clientEmail,
+        scope: 'https://www.googleapis.com/auth/datastore',
+        aud: tokenUri,
+        iat,
+        exp,
+      })
+    );
+    const signingInput = `${header}.${payload}`;
+    const cryptoKey = await globalThis.crypto.subtle.importKey(
+      'pkcs8',
+      pemToArrayBuffer(privateKey),
+      { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const signature = await globalThis.crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      cryptoKey,
+      new TextEncoder().encode(signingInput)
+    );
+    const jwt = `${signingInput}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
+
+    const tokenRes = await fetch(tokenUri, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${encodeURIComponent(jwt)}`,
+    });
+    if (!tokenRes.ok) return null;
+    const tokenData = (await tokenRes.json()) as { access_token?: string; expires_in?: number };
+    if (!tokenData.access_token) return null;
+
+    cachedServiceAccountToken = {
+      clientEmail,
+      accessToken: tokenData.access_token,
+      expiresAtMs: nowMs + Math.max(300, Number(tokenData.expires_in || 3600)) * 1000,
+    };
+    return tokenData.access_token;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchFirestoreDocument(
+  docPath: string,
+  bearerToken?: string | null
+): Promise<FirestoreDocFields | null> {
+  try {
+    const headers: Record<string, string> = {};
+    if (bearerToken) {
+      headers.Authorization = `Bearer ${bearerToken}`;
+    }
+    const res = await fetch(`${FIRESTORE_DOC_BASE}/${docPath}`, { headers });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { fields?: FirestoreDocFields };
+    return data.fields || null;
+  } catch {
+    return null;
+  }
+}
+
+function getEnvKeyForProvider(provider: AiProvider): string {
+  if (provider === 'groq') {
+    return (process.env.GROQ_API_KEY || '').trim();
+  }
+  if (provider === 'openrouter') {
+    return (process.env.OPENROUTER_API_KEY || '').trim();
+  }
+  const key = (
     process.env.GEMINI_API_KEY ||
     process.env.GEMINIAPIKEY ||
     process.env.API_KEY ||
     ''
   ).trim();
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
-    return null;
+  return key && key !== 'MY_GEMINI_API_KEY' ? key : '';
+}
+
+async function resolveAiConfig(req?: Request): Promise<ResolvedAiConfig> {
+  const statusFields = await fetchFirestoreDocument('siteSettings/aiStatus');
+  const statusEnabled =
+    typeof statusFields?.enabled?.booleanValue === 'boolean'
+      ? statusFields.enabled.booleanValue
+      : true;
+  const statusProvider = sanitizeProvider(statusFields?.provider?.stringValue);
+
+  if (!statusEnabled) {
+    return {
+      enabled: false,
+      provider: statusProvider,
+      apiKey: '',
+      source: 'firestore_admin_secret',
+      disabledByAdmin: true,
+    };
   }
 
-  // Vertex AI Express Mode keys start with "AQ." and require vertexai: true (aiplatform.googleapis.com),
-  // whereas standard Google AI Studio Gemini API keys start with "AIza..." (generativelanguage.googleapis.com).
-  const isVertexExpress = apiKey.startsWith('AQ.');
-  const ai = new GoogleGenAI({
-    apiKey,
-    ...(isVertexExpress ? { vertexai: true } : {}),
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+  const serviceToken = await getServiceAccountAccessToken();
+  const rawAuth = req?.headers.authorization || '';
+  const callerBearer = rawAuth.toLowerCase().startsWith('bearer ') ? rawAuth.slice(7).trim() : '';
+
+  const secretFields =
+    (serviceToken ? await fetchFirestoreDocument('admin_secrets/ai_support', serviceToken) : null) ||
+    (callerBearer ? await fetchFirestoreDocument('admin_secrets/ai_support', callerBearer) : null);
+
+  if (secretFields) {
+    const enabled =
+      typeof secretFields.enabled?.booleanValue === 'boolean'
+        ? secretFields.enabled.booleanValue
+        : true;
+    const provider = sanitizeProvider(secretFields.provider?.stringValue);
+    const firestoreKey = (secretFields.apiKey?.stringValue || '').trim();
+
+    if (!enabled) {
+      return {
+        enabled: false,
+        provider,
+        apiKey: '',
+        source: 'firestore_admin_secret',
+        disabledByAdmin: true,
+      };
+    }
+
+    if (firestoreKey) {
+      return {
+        enabled: true,
+        provider,
+        apiKey: firestoreKey,
+        source: 'firestore_admin_secret',
+        disabledByAdmin: false,
+      };
+    }
+
+    const providerEnvKey = getEnvKeyForProvider(provider);
+    if (providerEnvKey) {
+      return {
+        enabled: true,
+        provider,
+        apiKey: providerEnvKey,
+        source: 'env_fallback',
+        disabledByAdmin: false,
+      };
+    }
+  }
+
+  const preferredEnvKey = getEnvKeyForProvider(statusProvider);
+  if (preferredEnvKey) {
+    return {
+      enabled: true,
+      provider: statusProvider,
+      apiKey: preferredEnvKey,
+      source: 'env_fallback',
+      disabledByAdmin: false,
+    };
+  }
+
+  const geminiFallback = getEnvKeyForProvider('gemini');
+  if (geminiFallback) {
+    return {
+      enabled: true,
+      provider: 'gemini',
+      apiKey: geminiFallback,
+      source: 'env_fallback',
+      disabledByAdmin: false,
+    };
+  }
+
+  const groqFallback = getEnvKeyForProvider('groq');
+  if (groqFallback) {
+    return {
+      enabled: true,
+      provider: 'groq',
+      apiKey: groqFallback,
+      source: 'env_fallback',
+      disabledByAdmin: false,
+    };
+  }
+
+  const openRouterFallback = getEnvKeyForProvider('openrouter');
+  if (openRouterFallback) {
+    return {
+      enabled: true,
+      provider: 'openrouter',
+      apiKey: openRouterFallback,
+      source: 'env_fallback',
+      disabledByAdmin: false,
+    };
+  }
 
   return {
-    ai,
-    isVertexExpress,
-    models: isVertexExpress ? VERTEX_EXPRESS_MODELS : GEMINI_API_MODELS,
+    enabled: true,
+    provider: statusProvider,
+    apiKey: '',
+    source: 'none',
+    disabledByAdmin: false,
   };
 }
 
@@ -212,7 +488,6 @@ function sanitizeAttachmentToParts(attachments?: unknown): Part[] {
       }
     }
 
-    // Cap per-attachment base64 payload to ~6MB (~4.5MB binary)
     if (!base64Data || base64Data.length > 6_500_000) continue;
 
     if (ALLOWED_INLINE_MIMES.has(mime)) {
@@ -263,6 +538,90 @@ function buildContentsFromHistory(turns: ChatHistoryTurn[]): Content[] {
   return contents;
 }
 
+type OpenAiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } };
+
+interface OpenAiChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | OpenAiContentPart[];
+}
+
+function buildOpenAiMessages(
+  systemInstruction: string,
+  turns: ChatHistoryTurn[],
+  includeImages: boolean
+): { messages: OpenAiChatMessage[]; hasImages: boolean } {
+  const messages: OpenAiChatMessage[] = [{ role: 'system', content: systemInstruction }];
+  let hasImages = false;
+
+  for (const turn of turns) {
+    const role: 'user' | 'assistant' = turn.role === 'model' ? 'assistant' : 'user';
+    const textChunks: string[] = [];
+    const imageUrls: string[] = [];
+
+    if (Array.isArray(turn.attachments)) {
+      for (const raw of turn.attachments.slice(0, 3)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const rawMime = typeof raw.mimeType === 'string' ? raw.mimeType.trim().toLowerCase() : '';
+        const mime = rawMime === 'image/jpg' ? 'image/jpeg' : rawMime;
+        const fileName = typeof raw.name === 'string' ? raw.name.slice(0, 120) : 'attachment';
+        let base64Data = typeof raw.data === 'string' ? raw.data.trim() : '';
+
+        if (base64Data.startsWith('data:')) {
+          const commaIdx = base64Data.indexOf(',');
+          if (commaIdx !== -1) {
+            base64Data = base64Data.slice(commaIdx + 1);
+          }
+        }
+        if (!base64Data || base64Data.length > 6_500_000) continue;
+
+        if (ALLOWED_IMAGE_MIMES.has(mime)) {
+          if (includeImages && role === 'user') {
+            hasImages = true;
+            imageUrls.push(`data:${mime};base64,${base64Data}`);
+          }
+        } else if (mime === 'application/pdf') {
+          textChunks.push(`[Attached PDF: ${fileName}]`);
+        } else if (ALLOWED_TEXT_MIMES.has(mime)) {
+          try {
+            const decodedText = Buffer.from(base64Data, 'base64').toString('utf-8').slice(0, 15_000);
+            if (decodedText.trim()) {
+              textChunks.push(`[Attached File: ${fileName} (${mime})]\n${decodedText}`);
+            }
+          } catch {
+            // Ignore malformed text file
+          }
+        }
+      }
+    }
+
+    if (turn.text) {
+      textChunks.push(turn.text);
+    } else if (imageUrls.length > 0 && role === 'user') {
+      textChunks.push(
+        'Please examine this attached screenshot carefully and help me solve any issue in MicroEarn BD.'
+      );
+    }
+
+    const combinedText = textChunks.join('\n\n').trim();
+    if (imageUrls.length > 0 && role === 'user') {
+      const parts: OpenAiContentPart[] = [];
+      if (combinedText) {
+        parts.push({ type: 'text', text: combinedText });
+      }
+      for (const url of imageUrls) {
+        parts.push({ type: 'image_url', image_url: { url } });
+      }
+      messages.push({ role, content: parts });
+    } else if (combinedText) {
+      messages.push({ role, content: combinedText });
+    }
+  }
+
+  return { messages, hasImages };
+}
+
 async function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -275,8 +634,35 @@ function isModelNotFoundError(err: unknown): boolean {
     msg.includes('unknown_model') ||
     msg.includes('not_found') ||
     msg.includes('not found') ||
-    msg.includes('not supported for')
+    msg.includes('not supported for') ||
+    msg.includes('does not exist') ||
+    msg.includes('model_not_found')
   );
+}
+
+interface GeminiClientContext {
+  ai: GoogleGenAI;
+  isVertexExpress: boolean;
+  models: readonly string[];
+}
+
+function createGeminiClient(apiKey: string): GeminiClientContext {
+  const isVertexExpress = apiKey.startsWith('AQ.');
+  const ai = new GoogleGenAI({
+    apiKey,
+    ...(isVertexExpress ? { vertexai: true } : {}),
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+
+  return {
+    ai,
+    isVertexExpress,
+    models: isVertexExpress ? VERTEX_EXPRESS_MODELS : GEMINI_API_MODELS,
+  };
 }
 
 async function createStreamWithRetry(
@@ -308,7 +694,7 @@ async function createStreamWithRetry(
         lastError = err;
         const status = (err as { status?: number })?.status;
         if (isModelNotFoundError(err)) {
-          break; // Try fallback model
+          break;
         }
         const retryable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
         if (!retryable) {
@@ -361,49 +747,150 @@ async function generateOnceWithFallback(
   throw lastError;
 }
 
-function classifyGeminiError(err: unknown, language?: 'bn' | 'en'): { status: number; message: string } {
-  console.error('[SupportChat Gemini Error]', err);
+async function callOpenAiCompatibleProvider(params: {
+  provider: 'groq' | 'openrouter';
+  apiKey: string;
+  systemInstruction: string;
+  turns: ChatHistoryTurn[];
+  stream: boolean;
+}): Promise<globalThis.Response> {
+  const { provider, apiKey, systemInstruction, turns, stream } = params;
+  const endpoint =
+    provider === 'groq'
+      ? 'https://api.groq.com/openai/v1/chat/completions'
+      : 'https://openrouter.ai/api/v1/chat/completions';
+
+  const probePayload = buildOpenAiMessages(systemInstruction, turns, true);
+  const models: readonly string[] =
+    provider === 'groq'
+      ? probePayload.hasImages
+        ? GROQ_VISION_MODELS
+        : GROQ_TEXT_MODELS
+      : OPENROUTER_MODELS;
+
+  let lastError: ProviderHttpError | null = null;
+
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    const hasNext = i < models.length - 1;
+    const isTextOnlyModel =
+      model === 'llama-3.3-70b-versatile' || model === 'llama-3.1-8b-instant';
+    const { messages } = buildOpenAiMessages(systemInstruction, turns, !isTextOnlyModel);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    };
+    if (provider === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://microearnbd.workers.dev';
+      headers['X-Title'] = 'MicroEarn BD AI Support';
+    }
+
+    const upstreamRes = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages,
+        stream,
+        temperature: 0.5,
+        max_tokens: 1800,
+      }),
+    });
+
+    if (upstreamRes.ok) {
+      return upstreamRes;
+    }
+
+    const errText = await upstreamRes.text().catch(() => '');
+    let parsedErrMsg = errText;
+    try {
+      const errJson = JSON.parse(errText) as { error?: { message?: string } | string };
+      if (typeof errJson?.error === 'string') {
+        parsedErrMsg = errJson.error;
+      } else if (errJson?.error?.message) {
+        parsedErrMsg = errJson.error.message;
+      }
+    } catch {
+      // Keep raw text
+    }
+
+    const errObj = new ProviderHttpError(
+      provider,
+      upstreamRes.status,
+      parsedErrMsg || `HTTP ${upstreamRes.status}`,
+      errText
+    );
+    lastError = errObj;
+
+    const shouldTryNext =
+      hasNext &&
+      (upstreamRes.status === 404 ||
+        upstreamRes.status === 429 ||
+        upstreamRes.status === 503 ||
+        isModelNotFoundError(errObj));
+
+    if (shouldTryNext) {
+      continue;
+    }
+    throw errObj;
+  }
+
+  throw lastError || new ProviderHttpError(provider, 502, 'Upstream AI request failed.');
+}
+
+function classifyAiError(
+  err: unknown,
+  provider: AiProvider,
+  language?: 'bn' | 'en'
+): { status: number; message: string } {
+  console.error('[SupportChat Error]', provider, err);
   const isBn = language !== 'en';
   const rawMessage = ((err as { message?: string })?.message || '').toString();
   const lower = rawMessage.toLowerCase();
   const status = (err as { status?: number })?.status;
+  const providerLabel =
+    provider === 'groq' ? 'Groq' : provider === 'openrouter' ? 'OpenRouter' : 'Google Gemini';
 
   if (
     status === 400 ||
     status === 401 ||
     lower.includes('api_key_invalid') ||
     lower.includes('api key not valid') ||
-    lower.includes('invalid api key')
+    lower.includes('invalid api key') ||
+    lower.includes('invalid_api_key') ||
+    lower.includes('incorrect api key') ||
+    lower.includes('unauthorized') ||
+    lower.includes('no auth credentials') ||
+    lower.includes('user not found')
   ) {
     return {
       status: 400,
       message: isBn
-        ? 'AI সাপোর্ট কীটি সঠিক নয় বা মেয়াদোত্তীর্ণ। অনুগ্রহ করে Settings > Secrets (অথবা Cloudflare Secrets)-এ সঠিক GEMINI_API_KEY সেট করুন।'
-        : 'The configured GEMINI_API_KEY was rejected by the AI endpoint. Please verify your key in Settings > Secrets.',
+        ? `${providerLabel}-এর API Key-টি সঠিক নয় বা মেয়াদোত্তীর্ণ। অনুগ্রহ করে অ্যাডমিন প্যানেল → AI Support Settings থেকে সঠিক Key সেভ করুন।`
+        : `The configured ${providerLabel} API key was rejected or expired. Please verify it in Admin Panel → AI Support Settings.`,
     };
   }
-  if (status === 403 || lower.includes('permission_denied')) {
+
+  if (status === 403 || lower.includes('permission_denied') || lower.includes('forbidden')) {
     return {
       status: 403,
       message: isBn
-        ? 'API কীটির পারমিশন পাওয়া যায়নি। Settings > Secrets (অথবা Cloudflare Secrets)-এ GEMINI_API_KEY ও এন্ডপয়েন্ট অ্যাক্সেস যাচাই করুন।'
-        : 'AI service permission denied. Please verify your GEMINI_API_KEY permissions in Settings > Secrets.',
+        ? `${providerLabel} API Key-এর প্রয়োজনীয় পারমিশন নেই বা অ্যাক্সেস সীমাবদ্ধ। অনুগ্রহ করে অ্যাডমিন প্যানেল থেকে Key যাচাই করুন।`
+        : `${providerLabel} API permission denied. Please verify your key in Admin Panel → AI Support Settings.`,
     };
   }
-  if (isModelNotFoundError(err)) {
-    return {
-      status: 404,
-      message: isBn
-        ? 'নির্বাচিত AI মডেলটি এই কী/এন্ডপয়েন্টে সাপোর্টেড নয়। অনুগ্রহ করে একটু পর আবার চেষ্টা করুন।'
-        : 'The configured AI model is unavailable for this endpoint. Please try again shortly.',
-    };
-  }
+
   if (
+    status === 402 ||
     status === 429 ||
     status === 503 ||
     lower.includes('resource_exhausted') ||
     lower.includes('quota') ||
+    lower.includes('insufficient_quota') ||
     lower.includes('rate limit') ||
+    lower.includes('rate_limit') ||
+    lower.includes('credit') ||
     lower.includes('too many requests') ||
     lower.includes('overloaded') ||
     lower.includes('unavailable')
@@ -411,15 +898,25 @@ function classifyGeminiError(err: unknown, language?: 'bn' | 'en'): { status: nu
     return {
       status: 429,
       message: isBn
-        ? 'AI সাপোর্ট এখন সাময়িকভাবে ব্যস্ত (অনেক অনুরোধ একসাথে এসেছে)। অনুগ্রহ করে ১৫–৩০ সেকেন্ড পর আবার চেষ্টা করুন।'
-        : 'AI support is temporarily busy due to high traffic. Please wait 15–30 seconds and retry.',
+        ? `${providerLabel} AI-এর কোটা বা রিকোয়েস্ট সীমা সাময়িকভাবে শেষ/ব্যস্ত হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন অথবা অ্যাডমিন প্যানেল থেকে অন্য প্রোভাইডার নির্বাচন করুন।`
+        : `${providerLabel} quota or rate limit was reached. Please wait a moment and retry, or switch provider in Admin Panel.`,
     };
   }
+
+  if (isModelNotFoundError(err)) {
+    return {
+      status: 404,
+      message: isBn
+        ? `নির্বাচিত ${providerLabel} মডেলটি এই API Key-এর সাথে সাপোর্টেড নয়। অনুগ্রহ করে একটু পর আবার চেষ্টা করুন।`
+        : `The configured ${providerLabel} model is unavailable for this endpoint right now.`,
+    };
+  }
+
   return {
     status: 500,
     message: isBn
-      ? 'এই মুহূর্তে AI সাপোর্টের সাথে সংযোগ করা যাচ্ছে না। কিছুক্ষণ পর আবার চেষ্টা করুন।'
-      : 'Unable to reach AI Support right now. Please try again shortly.',
+      ? `এই মুহূর্তে ${providerLabel} AI সাপোর্টের সাথে সংযোগ করা যাচ্ছে না। কিছুক্ষণ পর আবার চেষ্টা করুন।`
+      : `Unable to reach ${providerLabel} AI Support right now. Please try again shortly.`,
   };
 }
 
@@ -427,15 +924,32 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '16mb' }));
 
-  app.get('/api/health', (_req: Request, res: Response) => {
-    const gemini = getGeminiContext();
+  app.get('/api/health', async (req: Request, res: Response) => {
+    const resolved = await resolveAiConfig(req);
+    const isVertexExpress = resolved.provider === 'gemini' && resolved.apiKey.startsWith('AQ.');
+    const model =
+      resolved.provider === 'groq'
+        ? GROQ_TEXT_MODELS[0]
+        : resolved.provider === 'openrouter'
+          ? OPENROUTER_MODELS[0]
+          : isVertexExpress
+            ? VERTEX_EXPRESS_MODELS[0]
+            : GEMINI_API_MODELS[0];
+
     res.json({
       ok: true,
       service: 'microearnbd-support-api',
-      endpoint: gemini?.isVertexExpress ? 'vertex-express' : 'gemini-api',
-      model: gemini?.models[0] ?? GEMINI_MODEL,
+      enabled: resolved.enabled,
+      provider: resolved.provider,
+      endpoint:
+        resolved.provider === 'gemini'
+          ? isVertexExpress
+            ? 'vertex-express'
+            : 'gemini-api'
+          : resolved.provider,
+      model,
       multimodal: true,
-      configured: Boolean(gemini),
+      configured: Boolean(resolved.apiKey),
     });
   });
 
@@ -500,14 +1014,128 @@ async function startServer() {
     }
 
     const reqLang = body.context?.language === 'en' ? 'en' : 'bn';
-    const gemini = getGeminiContext();
-    if (!gemini) {
+    const resolved = await resolveAiConfig(req);
+
+    if (resolved.disabledByAdmin || !resolved.enabled) {
       res.status(503).json({
         error:
           reqLang === 'en'
-            ? 'AI Support Assistant needs a GEMINI_API_KEY configured in Settings > Secrets.'
-            : 'AI সাপোর্ট চালু করতে Settings > Secrets-এ GEMINI_API_KEY সেট করুন।',
+            ? 'AI Support is currently turned off by Admin. Please use the direct Support Form or try again later.'
+            : 'অ্যাডমিন কর্তৃক AI সাপোর্ট বর্তমানে সাময়িকভাবে বন্ধ রাখা হয়েছে। অনুগ্রহ করে সরাসরি সাপোর্ট ফর্ম ব্যবহার করুন।',
       });
+      return;
+    }
+
+    if (!resolved.apiKey) {
+      res.status(503).json({
+        error:
+          reqLang === 'en'
+            ? 'No active AI API key is configured. Please configure it in Admin Panel → AI Support Settings or Secrets.'
+            : 'AI সাপোর্ট চালু করতে অ্যাডমিন প্যানেল → AI Support Settings অথবা Secrets-এ API Key সেট করুন।',
+      });
+      return;
+    }
+
+    const systemInstruction = buildContextualSystemInstruction(body.context);
+    const wantsStream = body.stream !== false;
+
+    if (resolved.provider === 'groq' || resolved.provider === 'openrouter') {
+      if (!wantsStream) {
+        try {
+          const upstreamRes = await callOpenAiCompatibleProvider({
+            provider: resolved.provider,
+            apiKey: resolved.apiKey,
+            systemInstruction,
+            turns: sanitizedTurns,
+            stream: false,
+          });
+          const json = (await upstreamRes.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          res.json({ text: json.choices?.[0]?.message?.content ?? '' });
+        } catch (err: unknown) {
+          const mapped = classifyAiError(err, resolved.provider, reqLang);
+          res.status(mapped.status).json({ error: mapped.message });
+        }
+        return;
+      }
+
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders?.();
+
+      let clientClosed = false;
+      req.on('close', () => {
+        clientClosed = true;
+      });
+
+      try {
+        const upstreamRes = await callOpenAiCompatibleProvider({
+          provider: resolved.provider,
+          apiKey: resolved.apiKey,
+          systemInstruction,
+          turns: sanitizedTurns,
+          stream: true,
+        });
+        if (!upstreamRes.body) {
+          throw new ProviderHttpError(resolved.provider, 502, 'Empty upstream stream body');
+        }
+        const reader = upstreamRes.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        let finished = false;
+
+        while (!finished && !clientClosed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith(':') || !line.startsWith('data:')) continue;
+            const payloadStr = line.slice(5).trim();
+            if (!payloadStr) continue;
+            if (payloadStr === '[DONE]') {
+              finished = true;
+              break;
+            }
+            let parsed: {
+              error?: { message?: string } | string;
+              choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }>;
+            };
+            try {
+              parsed = JSON.parse(payloadStr) as typeof parsed;
+            } catch {
+              continue;
+            }
+            if (parsed.error) {
+              const errMsg =
+                typeof parsed.error === 'string'
+                  ? parsed.error
+                  : parsed.error.message || 'Upstream stream error';
+              throw new ProviderHttpError(resolved.provider, 502, errMsg);
+            }
+            const delta =
+              parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content;
+            if (delta && !clientClosed) {
+              res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+            }
+          }
+        }
+        if (!clientClosed) {
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          res.end();
+        }
+      } catch (err: unknown) {
+        const mapped = classifyAiError(err, resolved.provider, reqLang);
+        if (!clientClosed) {
+          res.write(`data: ${JSON.stringify({ error: mapped.message })}\n\n`);
+          res.end();
+        }
+      }
       return;
     }
 
@@ -517,15 +1145,14 @@ async function startServer() {
       return;
     }
 
-    const systemInstruction = buildContextualSystemInstruction(body.context);
-    const wantsStream = body.stream !== false;
+    const gemini = createGeminiClient(resolved.apiKey);
 
     if (!wantsStream) {
       try {
         const result = await generateOnceWithFallback(gemini, systemInstruction, contents);
         res.json({ text: result.text ?? '' });
       } catch (err: unknown) {
-        const mapped = classifyGeminiError(err, reqLang);
+        const mapped = classifyAiError(err, 'gemini', reqLang);
         res.status(mapped.status).json({ error: mapped.message });
       }
       return;
@@ -555,7 +1182,7 @@ async function startServer() {
         res.end();
       }
     } catch (err: unknown) {
-      const mapped = classifyGeminiError(err, reqLang);
+      const mapped = classifyAiError(err, 'gemini', reqLang);
       if (!clientClosed) {
         res.write(`data: ${JSON.stringify({ error: mapped.message })}\n\n`);
         res.end();

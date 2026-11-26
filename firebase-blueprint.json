@@ -1099,6 +1099,77 @@
         "updatedBy",
         "updatedAt"
       ]
+    },
+    "AiSupportSecretConfig": {
+      "title": "AiSupportSecretConfig",
+      "description": "Admin-only AI Support provider and API key configuration stored at admin_secrets/ai_support.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["gemini", "groq", "openrouter"],
+          "maxLength": 24
+        },
+        "apiKey": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "enabled", "provider", "apiKey", "updatedBy", "updatedAt"]
+    },
+    "AiSupportPublicStatus": {
+      "title": "AiSupportPublicStatus",
+      "description": "Publicly readable non-secret AI Support on/off and active provider status stored at siteSettings/aiStatus.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["gemini", "groq", "openrouter"],
+          "maxLength": 24
+        },
+        "hasKey": {
+          "type": "boolean"
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "enabled", "provider", "hasKey", "updatedBy", "updatedAt"]
     }
   },
   "firestore": {
@@ -1156,7 +1227,11 @@
     },
     "/siteSettings/{settingId}": {
       "schema": "AdsConfig",
-      "description": "Dynamic ads and site configuration readable by all users and writable only by Admin."
+      "description": "Dynamic ads and non-secret AI public status configuration readable by all users and writable only by Admin."
+    },
+    "/admin_secrets/{secretId}": {
+      "schema": "AiSupportSecretConfig",
+      "description": "Admin-only API key and provider secrets strictly locked to Admin access."
     }
   }
 }

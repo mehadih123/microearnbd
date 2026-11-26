@@ -29,8 +29,8 @@ const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as c
 const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
 const GROQ_VISION_MODELS = [
   'meta-llama/llama-4-scout-17b-16e-instruct',
-  'llama-3.3-70b-versatile',
-  'llama-3.1-8b-instant',
+  'meta-llama/llama-4-maverick-17b-128e-instruct',
+  ...GROQ_TEXT_MODELS,
 ] as const;
 const OPENROUTER_MODELS = ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free'] as const;
 

@@ -564,6 +564,8 @@ function buildOpenAiMessages(
     }
 
     const combinedText = textChunks.join('\n\n').trim();
+    let contentPayload: string | OpenAiContentPart[] | null = null;
+
     if (imageUrls.length > 0 && role === 'user') {
       const parts: OpenAiContentPart[] = [];
       if (combinedText) {
@@ -572,9 +574,19 @@ function buildOpenAiMessages(
       for (const url of imageUrls) {
         parts.push({ type: 'image_url', image_url: { url } });
       }
-      messages.push({ role, content: parts });
+      contentPayload = parts;
     } else if (combinedText) {
-      messages.push({ role, content: combinedText });
+      contentPayload = combinedText;
+    }
+
+    if (contentPayload !== null) {
+      const prev = messages[messages.length - 1];
+      // Merge consecutive same-role text messages cleanly for strict OpenAI-compatible multi-turn chat
+      if (prev && prev.role === role && typeof prev.content === 'string' && typeof contentPayload === 'string') {
+        prev.content = `${prev.content}\n\n${contentPayload}`;
+      } else {
+        messages.push({ role, content: contentPayload });
+      }
     }
   }
 
@@ -911,12 +923,19 @@ function classifyAiError(
   };
 }
 
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+};
+
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
+      ...CORS_HEADERS,
     },
   });
 }
@@ -1201,23 +1220,31 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
+      ...CORS_HEADERS,
     },
   });
 }
+
+const SUPPORT_CHAT_PATHS = new Set(['/api/support-chat', '/api/chat', '/support-chat']);
+const HEALTH_PATHS = new Set(['/api/health', '/health']);
 
 export default {
   async fetch(request: Request, env: CfWorkerEnv, _ctx?: CfExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
 
-    if (pathname === '/api/health') {
+    if (request.method === 'OPTIONS' && (pathname.startsWith('/api/') || SUPPORT_CHAT_PATHS.has(pathname) || HEALTH_PATHS.has(pathname))) {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
+    if (HEALTH_PATHS.has(pathname)) {
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         return jsonResponse({ error: 'Method not allowed.' }, 405);
       }
       return handleHealth(env, request);
     }
 
-    if (pathname === '/api/support-chat') {
+    if (SUPPORT_CHAT_PATHS.has(pathname)) {
       if (request.method !== 'POST') {
         return jsonResponse({ error: 'Method not allowed. Use POST.' }, 405);
       }

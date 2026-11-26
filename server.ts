@@ -611,6 +611,8 @@ function buildOpenAiMessages(
     }
 
     const combinedText = textChunks.join('\n\n').trim();
+    let contentPayload: string | OpenAiContentPart[] | null = null;
+
     if (imageUrls.length > 0 && role === 'user') {
       const parts: OpenAiContentPart[] = [];
       if (combinedText) {
@@ -619,9 +621,18 @@ function buildOpenAiMessages(
       for (const url of imageUrls) {
         parts.push({ type: 'image_url', image_url: { url } });
       }
-      messages.push({ role, content: parts });
+      contentPayload = parts;
     } else if (combinedText) {
-      messages.push({ role, content: combinedText });
+      contentPayload = combinedText;
+    }
+
+    if (contentPayload !== null) {
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === role && typeof prev.content === 'string' && typeof contentPayload === 'string') {
+        prev.content = `${prev.content}\n\n${contentPayload}`;
+      } else {
+        messages.push({ role, content: contentPayload });
+      }
     }
   }
 
@@ -961,7 +972,7 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '16mb' }));
 
-  app.get('/api/health', async (req: Request, res: Response) => {
+  app.get(['/api/health', '/health'], async (req: Request, res: Response) => {
     const resolved = await resolveAiConfig(req);
     const isVertexExpress = resolved.provider === 'gemini' && resolved.apiKey.startsWith('AQ.');
     const model =
@@ -1013,7 +1024,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/support-chat', async (req: Request, res: Response) => {
+  app.post(['/api/support-chat', '/api/chat', '/support-chat'], async (req: Request, res: Response) => {
     const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
     if (!checkRateLimit(clientIp)) {
       res.status(429).json({ error: 'Too many requests. Please wait a moment before sending another message.' });

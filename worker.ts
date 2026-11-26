@@ -27,7 +27,11 @@ const FIRESTORE_DOC_BASE = `https://firestore.googleapis.com/v1/projects/${FIREB
 const GEMINI_API_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
 const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
 const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
-const GROQ_VISION_MODELS = ['meta-llama/llama-4-scout-17b-16e-instruct', 'llama-3.3-70b-versatile'] as const;
+const GROQ_VISION_MODELS = [
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+] as const;
 const OPENROUTER_MODELS = ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free'] as const;
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -533,6 +537,8 @@ function buildOpenAiMessages(
           if (includeImages && role === 'user') {
             hasImages = true;
             imageUrls.push(`data:${mime};base64,${base64Data}`);
+          } else if (role === 'user') {
+            textChunks.push(`[Attached Image: ${fileName}]`);
           }
         } else if (mime === 'application/pdf') {
           textChunks.push(`[Attached PDF: ${fileName}]`);
@@ -575,6 +581,20 @@ function buildOpenAiMessages(
   return { messages, hasImages };
 }
 
+function isInvalidAuthKeyError(status?: number, lowerMsg = ''): boolean {
+  return (
+    status === 401 ||
+    lowerMsg.includes('api_key_invalid') ||
+    lowerMsg.includes('api key not valid') ||
+    lowerMsg.includes('invalid api key') ||
+    lowerMsg.includes('invalid_api_key') ||
+    lowerMsg.includes('incorrect api key') ||
+    lowerMsg.includes('unauthorized') ||
+    lowerMsg.includes('no auth credentials') ||
+    lowerMsg.includes('user not found')
+  );
+}
+
 function isModelNotFoundError(err: unknown): boolean {
   const status = (err as { status?: number })?.status;
   const msg = ((err as { message?: string })?.message || '').toLowerCase();
@@ -583,7 +603,10 @@ function isModelNotFoundError(err: unknown): boolean {
     msg.includes('unknown_model') ||
     msg.includes('not_found') ||
     msg.includes('not found') ||
-    msg.includes('not supported for') ||
+    msg.includes('not supported') ||
+    msg.includes('unsupported') ||
+    msg.includes('decommissioned') ||
+    msg.includes('deprecated') ||
     msg.includes('does not exist') ||
     msg.includes('model_not_found')
   );
@@ -732,8 +755,10 @@ async function callOpenAiCompatibleProvider(params: {
     const { messages } = buildOpenAiMessages(systemInstruction, turns, !isTextOnlyModel);
 
     const headers: Record<string, string> = {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
+      'User-Agent': 'MicroEarnBD-Support/1.0',
     };
     if (provider === 'openrouter') {
       headers['HTTP-Referer'] = originUrl || 'https://microearnbd.workers.dev';
@@ -759,11 +784,15 @@ async function callOpenAiCompatibleProvider(params: {
     const errText = await upstreamRes.text().catch(() => '');
     let parsedErrMsg = errText;
     try {
-      const errJson = JSON.parse(errText) as { error?: { message?: string } | string };
+      const errJson = JSON.parse(errText) as {
+        error?: { message?: string; code?: string } | string;
+      };
       if (typeof errJson?.error === 'string') {
         parsedErrMsg = errJson.error;
-      } else if (errJson?.error?.message) {
-        parsedErrMsg = errJson.error.message;
+      } else if (errJson?.error) {
+        const msgPart = errJson.error.message || '';
+        const codePart = errJson.error.code || '';
+        parsedErrMsg = codePart && msgPart ? `[${codePart}] ${msgPart}` : msgPart || codePart || errText;
       }
     } catch {
       // Keep raw text
@@ -777,14 +806,24 @@ async function callOpenAiCompatibleProvider(params: {
     );
     lastError = errObj;
 
+    const lowerErr = errObj.message.toLowerCase();
+    const isAuthFailure = isInvalidAuthKeyError(upstreamRes.status, lowerErr);
     const shouldTryNext =
       hasNext &&
-      (upstreamRes.status === 404 ||
+      !isAuthFailure &&
+      (provider === 'groq' ||
+        upstreamRes.status === 404 ||
         upstreamRes.status === 429 ||
+        upstreamRes.status === 500 ||
+        upstreamRes.status === 502 ||
         upstreamRes.status === 503 ||
+        upstreamRes.status === 504 ||
         isModelNotFoundError(errObj));
 
     if (shouldTryNext) {
+      console.warn(
+        `[Worker SupportChat Fallback] ${provider} model "${model}" failed (${upstreamRes.status}): ${errObj.message}. Retrying next model...`
+      );
       continue;
     }
     throw errObj;
@@ -806,23 +845,21 @@ function classifyAiError(
   const providerLabel =
     provider === 'groq' ? 'Groq' : provider === 'openrouter' ? 'OpenRouter' : 'Google Gemini';
 
-  if (
-    status === 400 ||
-    status === 401 ||
-    lower.includes('api_key_invalid') ||
-    lower.includes('api key not valid') ||
-    lower.includes('invalid api key') ||
-    lower.includes('invalid_api_key') ||
-    lower.includes('incorrect api key') ||
-    lower.includes('unauthorized') ||
-    lower.includes('no auth credentials') ||
-    lower.includes('user not found')
-  ) {
+  if (isInvalidAuthKeyError(status, lower)) {
     return {
       status: 400,
       message: isBn
         ? `${providerLabel}-এর API Key-টি সঠিক নয় বা মেয়াদোত্তীর্ণ। অনুগ্রহ করে অ্যাডমিন প্যানেল → AI Support Settings থেকে সঠিক Key সেভ করুন।`
         : `The configured ${providerLabel} API key was rejected or expired. Please check it in Admin Panel → AI Support Settings.`,
+    };
+  }
+
+  if (isModelNotFoundError(err)) {
+    return {
+      status: 404,
+      message: isBn
+        ? `নির্বাচিত ${providerLabel} মডেলটি এই API Key-এর সাথে সাপোর্টেড নয়। অনুগ্রহ করে একটু পর আবার চেষ্টা করুন।`
+        : `The selected ${providerLabel} model is unavailable for this key right now.`,
     };
   }
 

@@ -305,9 +305,190 @@ export function clearPendingSignupProfile(): void {
 }
 
 // ============================================================================
-// USER PROFILE + ISOLATED PII ATOMIC BOOTSTRAP & READ
+// GOOGLE AUTH REDIRECT, WEBVIEW & ERROR HELPERS
 // ============================================================================
-export async function ensureFirestoreUserProfile(
+const PENDING_GOOGLE_REDIRECT_KEY = 'microearnbd_google_redirect_pending';
+const GOOGLE_REDIRECT_TTL_MS = 3 * 60 * 1000;
+
+export interface PendingGoogleRedirectState {
+  mode: 'login' | 'signup';
+  name?: string;
+  phone?: string;
+  guestCoins?: number;
+  startedAt: number;
+}
+
+export function isEmbeddedWebView(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return (
+    /FBAN|FBAV|FB_IAB|Instagram|Line\/|MicroMessenger|Telegram|WhatsApp|Snapchat|TikTok|BytedanceWebview/i.test(
+      ua
+    ) || /; wv\)/i.test(ua)
+  );
+}
+
+export function savePendingGoogleRedirectState(
+  data: Omit<PendingGoogleRedirectState, 'startedAt'>
+): void {
+  const payload: PendingGoogleRedirectState = {
+    mode: data.mode,
+    name: data.name?.trim() || undefined,
+    phone: data.phone?.replace(/[^0-9+-]/g, '').slice(0, 20) || undefined,
+    guestCoins: typeof data.guestCoins === 'number' ? Math.max(0, Math.floor(data.guestCoins)) : 0,
+    startedAt: Date.now()
+  };
+  const serialized = JSON.stringify(payload);
+  try {
+    sessionStorage.setItem(PENDING_GOOGLE_REDIRECT_KEY, serialized);
+  } catch {
+    // Ignore sessionStorage restrictions
+  }
+  try {
+    localStorage.setItem(PENDING_GOOGLE_REDIRECT_KEY, serialized);
+  } catch {
+    // Ignore localStorage restrictions
+  }
+}
+
+export function peekPendingGoogleRedirectState(): PendingGoogleRedirectState | null {
+  try {
+    const raw =
+      (typeof sessionStorage !== 'undefined' &&
+        sessionStorage.getItem(PENDING_GOOGLE_REDIRECT_KEY)) ||
+      (typeof localStorage !== 'undefined' &&
+        localStorage.getItem(PENDING_GOOGLE_REDIRECT_KEY));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingGoogleRedirectState;
+    if (!parsed || typeof parsed.startedAt !== 'number') return null;
+    if (Date.now() - parsed.startedAt > GOOGLE_REDIRECT_TTL_MS) {
+      clearPendingGoogleRedirectState();
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingGoogleRedirectState(): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(PENDING_GOOGLE_REDIRECT_KEY);
+    }
+  } catch {
+    // Ignore
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(PENDING_GOOGLE_REDIRECT_KEY);
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+export function formatFirebaseAuthErrorMessage(err: unknown, isBn: boolean): string {
+  const code = (err as { code?: string })?.code || '';
+  const rawMsg = err instanceof Error ? err.message : String(err || '');
+  const lowerMsg = rawMsg.toLowerCase();
+
+  if (code === 'auth/user-not-found') {
+    return isBn ? 'এই জিমেইলে কোনো একাউন্ট নেই' : 'No account found for this Gmail/Email.';
+  }
+  if (code === 'auth/wrong-password') {
+    return isBn ? 'আপনার সঠিক পিন দিয়ে প্রবেশ করুন' : 'Please enter your correct PIN/password.';
+  }
+  if (code === 'auth/user-disabled') {
+    return isBn
+      ? 'এই অ্যাকাউন্টটি নিষ্ক্রিয় করা হয়েছে। সাপোর্টে যোগাযোগ করুন।'
+      : 'This account has been disabled. Please contact support.';
+  }
+  if (code === 'auth/email-already-in-use') {
+    return isBn
+      ? 'এই জিমেইল ঠিকানায় ইতিমধ্যে অ্যাকাউন্ট রয়েছে! লগইন করুন অথবা Google দিয়ে প্রবেশ করুন।'
+      : 'Email already registered! Please sign in.';
+  }
+  if (code === 'auth/weak-password') {
+    return isBn
+      ? 'নিরাপত্তার স্বার্থে পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে!'
+      : 'Password must be at least 6 characters.';
+  }
+  if (code === 'auth/invalid-email') {
+    return isBn ? 'সঠিক জিমেইল / ইমেইল ঠিকানা লিখুন।' : 'Please enter a valid email address.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return isBn
+      ? 'অতিরিক্ত অনুরোধের কারণে সাময়িকভাবে লগইন সীমিত করা হয়েছে। কিছুক্ষণ পর চেষ্টা করুন।'
+      : 'Too many failed attempts. Please try again later.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return isBn
+      ? 'Firebase Console -> Authentication -> Sign-in method থেকে Google বা Email/Password প্রোভাইডার চালু করুন।'
+      : 'Please enable Google or Email/Password sign-in in Firebase Console -> Authentication -> Sign-in method.';
+  }
+  if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'auth/redirect-cancelled-by-user') {
+    return isBn
+      ? 'গুগল লগইন পপআপ সম্পন্ন হওয়ার আগেই বন্ধ হয়ে গেছে। আবার চেষ্টা করুন।'
+      : 'Google sign-in was closed before completion. Please try again.';
+  }
+  if (code === 'auth/popup-blocked') {
+    return isBn
+      ? 'ব্রাউজার পপআপ ব্লক করেছে! অনুগ্রহ করে ব্রাউজারের পপআপ অনুমতি দিন অথবা ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।'
+      : 'Popup blocked by browser. Please allow popups or sign in with Email & Password.';
+  }
+  if (code === 'auth/operation-not-supported-in-this-environment' || code === 'auth/web-storage-unsupported') {
+    return isBn
+      ? 'এই ব্রাউজার বা অ্যাপের ভেতরের WebView Google লগইন সাপোর্ট করছে না। অনুগ্রহ করে Chrome বা Safari ব্রাউজারে ওপেন করুন অথবা ইমেইল-পাসওয়ার্ড ব্যবহার করুন।'
+      : 'This browser or in-app WebView does not support Google Sign-In storage. Please open in Chrome/Safari or use Email & Password.';
+  }
+  if (code === 'auth/missing-initial-state' || code === 'auth/no-auth-event') {
+    return isBn
+      ? 'ব্রাউজারের থার্ড-পার্টি কুকি/সেশন ব্লক থাকার কারণে Google রিডাইরেক্ট সম্পন্ন হয়নি। অনুগ্রহ করে Chrome/Safari-তে পপআপ অনুমতি দিয়ে আবার চেষ্টা করুন।'
+      : 'Google redirect state was cleared by browser privacy/cookie blocking. Please allow popups in Chrome/Safari or use Email & Password.';
+  }
+  if (code === 'auth/unauthorized-domain') {
+    const host = typeof window !== 'undefined' ? window.location.hostname : '';
+    return isBn
+      ? `এই ডোমেইন (${host}) Firebase Console-এ অনুমোদিত নয়। Firebase Authentication -> Settings -> Authorized domains-এ "${host}" যুক্ত করুন।`
+      : `Domain (${host}) is not authorized in Firebase Auth Settings -> Authorized domains.`;
+  }
+  if (code === 'auth/network-request-failed') {
+    return isBn
+      ? 'ইন্টারনেট সংযোগে সমস্যা হয়েছে। নেটওয়ার্ক চেক করে আবার চেষ্টা করুন।'
+      : 'Network error. Please check your internet connection and try again.';
+  }
+  if (code === 'auth/account-exists-with-different-credential') {
+    return isBn
+      ? 'এই জিমেইলে অন্য লগইন পদ্ধতি (ইমেইল/পাসওয়ার্ড) ব্যবহৃত হয়েছে। অনুগ্রহ করে সেই পদ্ধতিতে লগইন করুন।'
+      : 'An account already exists with this email using another sign-in method.';
+  }
+  if (lowerMsg.includes('disallowed_useragent') || lowerMsg.includes('useragent')) {
+    return isBn
+      ? 'ইন-অ্যাপ ব্রাউজার থেকে Google লগইন অনুমোদিত নয়। অনুগ্রহ করে মেনু থেকে "Open in Chrome / Safari" দিয়ে লগইন করুন।'
+      : 'Google blocks Sign-In inside in-app WebViews. Please open this page in Chrome or Safari.';
+  }
+  if (lowerMsg.includes('missing or insufficient permissions') || lowerMsg.includes('permission-denied')) {
+    return isBn
+      ? 'অ্যাকাউন্ট প্রোফাইল ডেটাবেসে সংরক্ষণ করতে পারমিশন সমস্যা হয়েছে। অনুগ্রহ করে পেজ রিফ্রেশ করে আবার Google লগইন করুন।'
+      : 'Could not save user profile due to a permission check. Please refresh and try Google Sign-In again.';
+  }
+  if (isOfflineOrUnavailableError(err)) {
+    return isBn
+      ? 'সার্ভারের সাথে সংযোগ বিচ্ছিন্ন রয়েছে। ইন্টারনেট চেক করে আবার চেষ্টা করুন।'
+      : 'Database is temporarily offline. Please check your connection and try again.';
+  }
+  return isBn
+    ? 'অথেনটিকেশন সম্পন্ন করা যায়নি। তথ্য যাচাই করে আবার চেষ্টা করুন।'
+    : 'Authentication failed. Please verify your details and try again.';
+}
+
+// ============================================================================
+// USER PROFILE + ISOLATED PII ATOMIC BOOTSTRAP & READ (DEDUPLICATED PER UID)
+// ============================================================================
+const inFlightProfileSyncs = new Map<string, Promise<UserAccount | null>>();
+
+async function ensureFirestoreUserProfileInternal(
   fbUser: User,
   extra?: { name?: string; phone?: string; guestCoins?: number; referredBy?: string }
 ): Promise<UserAccount | null> {
@@ -319,6 +500,13 @@ export async function ensureFirestoreUserProfile(
   const isGoogleUser = Boolean(fbUser.providerData?.some(p => p.providerId === 'google.com'));
   if (!fbUser.emailVerified && !isGoogleUser) {
     return null;
+  }
+
+  // Ensure fresh Firebase ID token is ready for Firestore security rules
+  try {
+    await fbUser.getIdToken();
+  } catch {
+    // Continue; token may still be cached
   }
 
   let profileSnap;
@@ -349,37 +537,46 @@ export async function ensureFirestoreUserProfile(
       'আজ, ' + new Date().toLocaleTimeString('bn-BD', { hour: '2-digit', minute: '2-digit' });
     const refCode = uid.slice(0, 8).toUpperCase();
     const storedRef = extra?.referredBy || (typeof window !== 'undefined' ? localStorage.getItem('taskvault_ref') || '' : '');
-    const cleanRef = storedRef.trim();
-    const validRef = cleanRef && cleanRef !== refCode && cleanRef !== uid ? cleanRef : '';
+    const cleanRef = storedRef.trim().slice(0, 64);
+    const validRef =
+      cleanRef &&
+      cleanRef !== refCode &&
+      cleanRef !== uid &&
+      /^[a-zA-Z0-9_-]{1,64}$/.test(cleanRef)
+        ? cleanRef
+        : '';
 
-    const batch = writeBatch(db);
-    batch.set(doc(db, 'users', uid), {
-      uid,
-      name: safeName,
-      role: isBootstrappedAdmin ? 'admin' : 'user',
-      balance: 0,
-      pendingEscrowBalance: 0,
-      coins: initialCoins,
-      memberTier: isBootstrappedAdmin ? 'মাস্টার অ্যাডমিন' : 'ভেরিফাইড মেম্বার',
-      isBlocked: false,
-      joinedDate: truncateStr(joinedDate, 80, 'আজ'),
-      referralCode: refCode,
-      referredBy: validRef,
-      referralsCount: 0,
-      referralEarnings: 0,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    batch.set(doc(db, 'users', uid, 'private', 'pii'), {
-      uid,
-      email: safeEmail,
-      phone: cleanPhone,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
+    const createProfilePayload = () => {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', uid), {
+        uid,
+        name: safeName,
+        role: isBootstrappedAdmin ? 'admin' : 'user',
+        balance: 0,
+        pendingEscrowBalance: 0,
+        coins: initialCoins,
+        memberTier: isBootstrappedAdmin ? 'মাস্টার অ্যাডমিন' : 'ভেরিফাইড মেম্বার',
+        isBlocked: false,
+        joinedDate: truncateStr(joinedDate, 80, 'আজ'),
+        referralCode: refCode,
+        referredBy: validRef,
+        referralsCount: 0,
+        referralEarnings: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      batch.set(doc(db, 'users', uid, 'private', 'pii'), {
+        uid,
+        email: safeEmail,
+        phone: cleanPhone,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      return batch.commit();
+    };
 
     try {
-      await batch.commit();
+      await createProfilePayload();
       clearPendingSignupProfile();
 
       // If referred by another user, increment their referral count
@@ -397,30 +594,65 @@ export async function ensureFirestoreUserProfile(
           // Non-critical referral increment
         }
       }
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, userPath);
-    }
 
-    return {
-      id: uid,
-      name: safeName,
-      phone: cleanPhone,
-      email: safeEmail,
-      role: isBootstrappedAdmin ? 'admin' : 'user',
-      balance: 0,
-      pendingEscrowBalance: 0,
-      coins: initialCoins,
-      memberTier: isBootstrappedAdmin ? 'মাস্টার অ্যাডমিন' : 'ভেরিফাইড মেম্বার',
-      isBlocked: false,
-      joinedDate,
-      referralCode: refCode,
-      referredBy: validRef,
-      referralsCount: 0,
-      referralEarnings: 0
-    };
+      return {
+        id: uid,
+        name: safeName,
+        phone: cleanPhone,
+        email: safeEmail,
+        role: isBootstrappedAdmin ? 'admin' : 'user',
+        balance: 0,
+        pendingEscrowBalance: 0,
+        coins: initialCoins,
+        memberTier: isBootstrappedAdmin ? 'মাস্টার অ্যাডমিন' : 'ভেরিফাইড মেম্বার',
+        isBlocked: false,
+        joinedDate,
+        referralCode: refCode,
+        referredBy: validRef,
+        referralsCount: 0,
+        referralEarnings: 0
+      };
+    } catch (firstErr) {
+      // Handle race condition if another tab/listener created the doc concurrently, or token propagation delay
+      const code = (firstErr as { code?: string })?.code || '';
+      if (code === 'permission-denied' || code === 'already-exists') {
+        try {
+          const existingSnap = await getDocWithOfflineRetry(doc(db, 'users', uid));
+          if (existingSnap.exists()) {
+            profileSnap = existingSnap;
+          } else {
+            await fbUser.getIdToken(true);
+            await new Promise(resolve => setTimeout(resolve, 250));
+            await createProfilePayload();
+            clearPendingSignupProfile();
+            return {
+              id: uid,
+              name: safeName,
+              phone: cleanPhone,
+              email: safeEmail,
+              role: isBootstrappedAdmin ? 'admin' : 'user',
+              balance: 0,
+              pendingEscrowBalance: 0,
+              coins: initialCoins,
+              memberTier: isBootstrappedAdmin ? 'মাস্টার অ্যাডমিন' : 'ভেরিফাইড মেম্বার',
+              isBlocked: false,
+              joinedDate,
+              referralCode: refCode,
+              referredBy: validRef,
+              referralsCount: 0,
+              referralEarnings: 0
+            };
+          }
+        } catch (retryErr) {
+          handleFirestoreError(retryErr, OperationType.CREATE, userPath);
+        }
+      } else {
+        handleFirestoreError(firstErr, OperationType.CREATE, userPath);
+      }
+    }
   }
 
-  const profileData = profileSnap.data();
+  const profileData = profileSnap.data()!;
   let email = fbUser.email || '';
   let phone = resolvedExtraPhone || '';
 
@@ -480,6 +712,23 @@ export async function ensureFirestoreUserProfile(
     referralsCount: Number(profileData.referralsCount || 0),
     referralEarnings: Number(profileData.referralEarnings || 0)
   };
+}
+
+export async function ensureFirestoreUserProfile(
+  fbUser: User,
+  extra?: { name?: string; phone?: string; guestCoins?: number; referredBy?: string }
+): Promise<UserAccount | null> {
+  const uid = sanitizeId(fbUser.uid);
+  const existing = inFlightProfileSyncs.get(uid);
+  if (existing) {
+    return existing;
+  }
+
+  const run = ensureFirestoreUserProfileInternal(fbUser, extra).finally(() => {
+    inFlightProfileSyncs.delete(uid);
+  });
+  inFlightProfileSyncs.set(uid, run);
+  return run;
 }
 
 // ============================================================================

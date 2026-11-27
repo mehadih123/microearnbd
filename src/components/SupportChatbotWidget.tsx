@@ -51,20 +51,50 @@ interface SupportChatbotWidgetProps {
 
 const SESSION_STORAGE_KEY = 'microearnbd_support_chat_v2';
 const MAX_ATTACHMENTS_PER_MSG = 3;
-const MAX_RAW_FILE_BYTES = 4 * 1024 * 1024; // 4MB
+const MAX_RAW_FILE_BYTES = 8 * 1024 * 1024; // 8MB raw camera photo limit
 
-const SUPPORTED_MIME_TYPES = new Set([
+const STANDARD_IMAGE_MIMES = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
   'image/webp',
   'image/gif',
+]);
+
+const SUPPORTED_MIME_TYPES = new Set([
+  ...STANDARD_IMAGE_MIMES,
+  'image/heic',
+  'image/heif',
+  'image/avif',
+  'image/bmp',
   'application/pdf',
   'text/plain',
   'text/csv',
   'text/markdown',
   'application/json'
 ]);
+
+function inferMimeTypeFromFile(file: File): string {
+  const direct = (file.type || '').trim().toLowerCase();
+  if (direct) {
+    return direct === 'image/jpg' ? 'image/jpeg' : direct;
+  }
+  const lowerName = file.name.trim().toLowerCase();
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) return 'image/jpeg';
+  if (lowerName.endsWith('.png')) return 'image/png';
+  if (lowerName.endsWith('.webp')) return 'image/webp';
+  if (lowerName.endsWith('.gif')) return 'image/gif';
+  if (lowerName.endsWith('.heic')) return 'image/heic';
+  if (lowerName.endsWith('.heif')) return 'image/heif';
+  if (lowerName.endsWith('.avif')) return 'image/avif';
+  if (lowerName.endsWith('.bmp')) return 'image/bmp';
+  if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.txt')) return 'text/plain';
+  if (lowerName.endsWith('.csv')) return 'text/csv';
+  if (lowerName.endsWith('.json')) return 'application/json';
+  if (lowerName.endsWith('.md')) return 'text/markdown';
+  return '';
+}
 
 function formatTime(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -96,26 +126,35 @@ function readFileAsBase64(file: File): Promise<{ base64: string; dataUrl: string
   });
 }
 
-async function compressImageIfNeeded(file: File): Promise<{ base64: string; dataUrl: string; mimeType: string }> {
+async function compressImageIfNeeded(
+  file: File,
+  normalizedMime: string
+): Promise<{ base64: string; dataUrl: string; mimeType: string }> {
   const { base64, dataUrl } = await readFileAsBase64(file);
-  // Keep smaller images & GIFs untouched for crisp OCR of TrxIDs/text
-  if (file.type === 'image/gif' || file.size <= 1.2 * 1024 * 1024) {
+  const safeStandardMime = STANDARD_IMAGE_MIMES.has(normalizedMime)
+    ? normalizedMime === 'image/jpg'
+      ? 'image/jpeg'
+      : normalizedMime
+    : '';
+
+  // Keep smaller standard PNG/JPG/WEBP/GIF images untouched for crisp OCR of TrxIDs/text
+  if (safeStandardMime && (safeStandardMime === 'image/gif' || file.size <= 700 * 1024)) {
     return {
       base64,
       dataUrl,
-      mimeType: file.type === 'image/jpg' ? 'image/jpeg' : file.type
+      mimeType: safeStandardMime
     };
   }
 
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const maxDim = 1600;
+      const maxDim = 1400;
       let { width, height } = img;
       if (width > maxDim || height > maxDim) {
         const scale = Math.min(maxDim / width, maxDim / height);
-        width = Math.round(width * scale);
-        height = Math.round(height * scale);
+        width = Math.max(1, Math.round(width * scale));
+        height = Math.max(1, Math.round(height * scale));
       }
 
       const canvas = document.createElement('canvas');
@@ -123,11 +162,15 @@ async function compressImageIfNeeded(file: File): Promise<{ base64: string; data
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        resolve({ base64, dataUrl, mimeType: file.type || 'image/jpeg' });
+        if (safeStandardMime) {
+          resolve({ base64, dataUrl, mimeType: safeStandardMime });
+        } else {
+          reject(new Error('Canvas unavailable'));
+        }
         return;
       }
       ctx.drawImage(img, 0, 0, width, height);
-      const compressedUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const compressedUrl = canvas.toDataURL('image/jpeg', 0.82);
       const idx = compressedUrl.indexOf(',');
       resolve({
         dataUrl: compressedUrl,
@@ -135,7 +178,13 @@ async function compressImageIfNeeded(file: File): Promise<{ base64: string; data
         mimeType: 'image/jpeg'
       });
     };
-    img.onerror = () => resolve({ base64, dataUrl, mimeType: file.type || 'image/jpeg' });
+    img.onerror = () => {
+      if (safeStandardMime) {
+        resolve({ base64, dataUrl, mimeType: safeStandardMime });
+      } else {
+        reject(new Error('Unsupported image format'));
+      }
+    };
     img.src = dataUrl;
   });
 }
@@ -152,61 +201,13 @@ function renderInlineFormatting(text: string): React.ReactNode[] {
     }
     if (token.startsWith('`') && token.endsWith('`') && token.length > 2) {
       return (
-        <code
-          key={idx}
-          className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 font-mono text-[14px] text-blue-700 dark:text-sky-300"
-        >
+        <span key={idx} className="font-medium text-slate-950 dark:text-white">
           {token.slice(1, -1)}
-        </code>
+        </span>
       );
     }
     return <React.Fragment key={idx}>{token}</React.Fragment>;
   });
-}
-
-function CodeBlock({ languageLabel, code, isBn }: { languageLabel: string; code: string; isBn: boolean }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      playSound('click');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Ignore clipboard failure
-    }
-  };
-
-  return (
-    <div className="my-3 rounded-2xl overflow-hidden border border-slate-200/80 dark:border-slate-800 bg-[#0d1117] text-slate-100 shadow-sm">
-      <div className="px-3.5 py-2 bg-[#161b22] border-b border-slate-800/90 flex items-center justify-between gap-2 text-xs">
-        <span className="font-mono font-medium tracking-wide text-slate-300">
-          {languageLabel || 'code'}
-        </span>
-        <button
-          type="button"
-          onClick={() => void handleCopy()}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 font-medium transition-colors cursor-pointer"
-        >
-          {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-400">{isBn ? 'কপি হয়েছে' : 'Copied'}</span>
-            </>
-          ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" />
-              <span>{isBn ? 'কোড কপি' : 'Copy'}</span>
-            </>
-          )}
-        </button>
-      </div>
-      <pre className="p-3.5 overflow-x-auto text-[13px] leading-relaxed font-mono text-slate-100">
-        <code>{code}</code>
-      </pre>
-    </div>
-  );
 }
 
 function FormattedTextSegment({ text }: { text: string }) {
@@ -251,25 +252,25 @@ function FormattedMessageBody({ text, isUser, isBn }: { text: string; isUser: bo
     return <p className="whitespace-pre-wrap break-words leading-[1.68]">{text}</p>;
   }
 
-  // Split by fenced code blocks ```lang ... ```
-  const segments = text.split(/(```[\w-]*\n[\s\S]*?```)/g);
+  // Strip any accidental raw code blocks (including in-progress blocks while streaming)
+  const cleanedText = text
+    .replace(/```[\s\S]*?(?:```|$)/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 
-  return (
-    <div className="space-y-2 break-words">
-      {segments.map((segment, idx) => {
-        if (!segment) return null;
-        if (segment.startsWith('```') && segment.endsWith('```')) {
-          const firstNewline = segment.indexOf('\n');
-          const lang = firstNewline !== -1 ? segment.slice(3, firstNewline).trim() : '';
-          const code = firstNewline !== -1
-            ? segment.slice(firstNewline + 1, -3).replace(/\n$/, '')
-            : segment.slice(3, -3);
-          return <CodeBlock key={idx} languageLabel={lang} code={code} isBn={isBn} />;
+  if (!cleanedText) {
+    return (
+      <FormattedTextSegment
+        text={
+          isBn
+            ? 'আমি এটি সহজ ভাষায় ব্যাখ্যা করতে পারি—আপনি কী জানতে চান তা একটু বিস্তারিত লিখে বলুন।'
+            : 'I can explain this in simple, everyday language—please let me know what you would like help with.'
         }
-        return <FormattedTextSegment key={idx} text={segment} />;
-      })}
-    </div>
-  );
+      />
+    );
+  }
+
+  return <FormattedTextSegment text={cleanedText} />;
 }
 
 function BrandMLogoMark({ className = 'w-4 h-4' }: { className?: string }) {
@@ -328,8 +329,8 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
     role: 'model',
     timestamp: formatTime(),
     text: bn
-      ? 'আসসালামু আলাইকুম! আমি **MicroEarn BD AI অ্যাসিস্ট্যান্ট ও প্ল্যাটফর্ম আর্কিটেক্ট** (বাংলা ও English)।\n\n• **কোড, টেক্সট ও লেআউট তৈরি**: React/Tailwind কোড, রেসপন্সিভ UI কম্পোনেন্ট, মার্কেটিং টেক্সট বা প্রোডাক্ট পোস্ট তৈরি করে নিন।\n• **তাৎক্ষণিক সাপোর্ট ও স্ক্রিনশট বিশ্লেষণ**: পেমেন্ট TrxID, এরর বা কাজের প্রমাণ আপলোড করে দ্রুত সমাধান পান।\n• **আর্নিং, বিজনেস ও সুরক্ষা**: ম্যাথ, কুইজ, ক্যাপচা, রিসেলিং, বিকাশ উইথড্রয়াল এবং স্ক্যাম প্রতিরোধের সঠিক গাইড।'
-      : 'Hello! I am the **MicroEarn BD AI Assistant & Platform Architect** (fluent in English & বাংলা).\n\n• **Code, Copy & Layout Builder**: Generate React/Tailwind code, responsive UI components, or product/marketing copy anytime.\n• **Visual Troubleshooting**: Attach payment TrxID screenshots, error screens, or task proofs for instant help.\n• **Platform, Business & Safety**: Verified guides on tasks, wallet cashouts, Bangladesh startup ideas, and scam defense.'
+      ? 'আসসালামু আলাইকুম! আমি **MicroEarn BD AI অ্যাসিস্ট্যান্ট** (বাংলা ও English)।\n\n• **MicroEarn BD সাপোর্ট**: কুইজ, ম্যাথ, ক্যাপচা, রিসেলিং, ওয়ালেট ও বিকাশ উইথড্রয়ালের সহজ গাইড।\n• **যেকোনো সাধারণ প্রশ্ন**: দৈনন্দিন যেকোনো তথ্য, পড়াশোনা, লেখালেখি বা দরকারি বিষয়ে সহজ ভাষায় উত্তর।\n• **ছবি ও স্ক্রিনশট সহায়তা**: গ্যালারি বা ক্যামেরা থেকে ছবি/স্ক্রিনশট দিলে আমি তা দেখে সাহায্য করতে পারি।'
+      : 'Hello! I am the **MicroEarn BD AI Assistant** (fluent in English & বাংলা).\n\n• **MicroEarn BD Support**: Clear answers on tasks, quizzes, reselling, wallet rules, and withdrawals.\n• **General Everyday Help**: Ask general knowledge, study, writing, or everyday helpful questions anytime.\n• **Photo & Screenshot Help**: Attach a photo from camera or gallery and I will inspect it to help you.'
   });
 
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -553,19 +554,9 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
     const nextAttachments: ChatAttachment[] = [];
 
     for (const file of files.slice(0, availableSlots)) {
-      const normalizedType =
-        file.type ||
-        (file.name.endsWith('.txt')
-          ? 'text/plain'
-          : file.name.endsWith('.csv')
-            ? 'text/csv'
-            : file.name.endsWith('.json')
-              ? 'application/json'
-              : file.name.endsWith('.md')
-                ? 'text/markdown'
-                : '');
+      const normalizedType = inferMimeTypeFromFile(file);
 
-      if (!SUPPORTED_MIME_TYPES.has(normalizedType.toLowerCase())) {
+      if (!SUPPORTED_MIME_TYPES.has(normalizedType)) {
         setAttachmentError(
           isBn
             ? `"${file.name}" সাপোর্টেড নয়। ছবি (PNG/JPG/WEBP), PDF অথবা TXT/CSV ফাইল দিন।`
@@ -577,15 +568,15 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
       if (file.size > MAX_RAW_FILE_BYTES) {
         setAttachmentError(
           isBn
-            ? `"${file.name}" ৪ MB-এর বেশি। অনুগ্রহ করে অপেক্ষাকৃত ছোট ফাইল দিন।`
-            : `"${file.name}" exceeds 4 MB limit.`
+            ? `"${file.name}" ৮ MB-এর বেশি। অনুগ্রহ করে অপেক্ষাকৃত ছোট ফাইল দিন।`
+            : `"${file.name}" exceeds 8 MB limit.`
         );
         continue;
       }
 
       try {
         if (normalizedType.startsWith('image/')) {
-          const compressed = await compressImageIfNeeded(file);
+          const compressed = await compressImageIfNeeded(file, normalizedType);
           nextAttachments.push({
             id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             name: file.name,
@@ -606,7 +597,9 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
         }
       } catch {
         setAttachmentError(
-          isBn ? `"${file.name}" পড়া সম্ভব হয়নি।` : `Failed to process "${file.name}".`
+          isBn
+            ? `"${file.name}" ছবিটি প্রসেস করা যায়নি। অনুগ্রহ করে PNG বা JPG ছবি দিন।`
+            : `Failed to process "${file.name}". Please try a PNG or JPG image.`
         );
       }
     }
@@ -856,21 +849,24 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
       timestamp: formatTime()
     };
 
-    // Only keep the last 6 non-error turns for fast context & low token latency
-    const historyForApi = [...messages, userMsg]
+    // Only keep the last 6 non-error turns; include binary attachment data only on the latest turn
+    const recentNonErrorTurns = [...messages, userMsg]
       .filter(m => m.id !== 'welcome' && !m.isError)
-      .slice(-6)
-      .map(m => ({
-        role: m.role,
-        text: m.text,
-        attachments: m.attachments
-          ?.filter(a => Boolean(a.data))
-          .map(a => ({
-            name: a.name,
-            mimeType: a.mimeType,
-            data: a.data
-          }))
-      }));
+      .slice(-6);
+    const historyForApi = recentNonErrorTurns.map((m, idx) => ({
+      role: m.role,
+      text: m.text,
+      attachments:
+        idx === recentNonErrorTurns.length - 1
+          ? m.attachments
+              ?.filter(a => Boolean(a.data))
+              .map(a => ({
+                name: a.name,
+                mimeType: a.mimeType,
+                data: a.data
+              }))
+          : undefined
+    }));
 
     userScrolledUpRef.current = false;
     activeAssistantIdRef.current = assistantMsgId;
@@ -1490,7 +1486,7 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.txt,.csv,.md,.json"
+              accept="image/*,application/pdf,.txt,.csv,.md,.json"
               className="hidden"
               onChange={e => {
                 void handleFilesSelected(e.target.files);
@@ -1551,8 +1547,8 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
                 maxLength={4000}
                 placeholder={
                   isBn
-                    ? 'প্রশ্ন, কোড বা স্ক্রিনশট দিন...'
-                    : 'Ask anything or attach a screenshot...'
+                    ? 'যেকোনো প্রশ্ন করুন বা ছবি/স্ক্রিনশট দিন...'
+                    : 'Ask anything or attach a photo/screenshot...'
                 }
                 className="flex-1 min-w-0 resize-none max-h-28 bg-transparent border-0 px-2 py-2.5 text-[15.5px] text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-0 leading-snug"
               />

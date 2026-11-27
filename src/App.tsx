@@ -80,7 +80,11 @@ import {
   deleteCurrentUserAccount,
   DEFAULT_ADS_CONFIG,
   subscribeAdsConfig,
-  saveAdsConfigToFirestore
+  saveAdsConfigToFirestore,
+  formatFirebaseAuthErrorMessage,
+  isEmbeddedWebView,
+  peekPendingGoogleRedirectState,
+  clearPendingGoogleRedirectState
 } from './firebase';
 
 import {
@@ -166,6 +170,10 @@ export default function App() {
   const [supportChatOpen, setSupportChatOpen] = useState(false);
   const [taskAdModalOpen, setTaskAdModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [redirectAuthChecking, setRedirectAuthChecking] = useState<boolean>(() =>
+    Boolean(peekPendingGoogleRedirectState())
+  );
+  const [authRedirectError, setAuthRedirectError] = useState<string>('');
 
   const TASK_SUBMISSION_COUNT_KEY = 'microearn_task_submission_count';
   const [taskSubmissionCount, setTaskSubmissionCount] = useState<number>(() => {
@@ -201,10 +209,21 @@ export default function App() {
   const quizFetchInFlightRef = useRef<boolean>(false);
   const isConvertingCoinsRef = useRef<boolean>(false);
   const guestCoinsRef = useRef<number>(guestCoins);
+  const languageRef = useRef<Language>(language);
+  const authModalOpenRef = useRef<boolean>(authModalOpen);
+  const lastAuthToastUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     guestCoinsRef.current = guestCoins;
   }, [guestCoins]);
+
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+
+  useEffect(() => {
+    authModalOpenRef.current = authModalOpen;
+  }, [authModalOpen]);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -329,25 +348,55 @@ export default function App() {
   }, []);
 
   // =========================================================================
-  // 2. FIREBASE AUTHENTICATION LISTENER & USER PROFILE SYNC
+  // 2. FIREBASE AUTHENTICATION LISTENER, REDIRECT RECOVERY & PROFILE SYNC
   // =========================================================================
-  useEffect(() => {
-    void getRedirectResult(auth)
-      .then(async result => {
-        if (result?.user) {
-          await ensureFirestoreUserProfile(result.user, {
-            guestCoins: guestCoinsRef.current
-          });
-        }
-      })
-      .catch(err => {
-        console.warn('Google redirect sign-in check:', err);
-      });
-  }, []);
-
   useEffect(() => {
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let isDisposed = false;
+    const pendingRedirect = peekPendingGoogleRedirectState();
+
+    const applySignedInProfile = (
+      profile: UserAccount,
+      fbUserEmail: string | null,
+      options?: { isNewSignup?: boolean; showWelcomeToast?: boolean; usedCoins?: number }
+    ) => {
+      if (isDisposed) return;
+      if (options?.usedCoins && options.usedCoins > 0) {
+        setGuestCoins(0);
+      }
+      if (profile.isBlocked) {
+        setCurrentUser(null);
+        setBlockedNoticeUser({
+          name: profile.name,
+          phone: profile.phone || fbUserEmail || '',
+          reason: profile.blockReason || 'অ্যাডমিন কর্তৃক অ্যাকাউন্ট স্থগিত'
+        });
+        setAuthModalOpen(true);
+        return;
+      }
+
+      clearPendingGoogleRedirectState();
+      setAuthRedirectError('');
+      setCurrentUser(profile);
+      setBalance(profile.balance);
+      setPendingEscrowBalance(profile.pendingEscrowBalance);
+      setCoins(profile.coins);
+      setAuthModalOpen(false);
+
+      if (options?.showWelcomeToast && lastAuthToastUidRef.current !== profile.id) {
+        lastAuthToastUidRef.current = profile.id;
+        const isBn = languageRef.current === 'bn';
+        showToast(
+          options.isNewSignup
+            ? isBn
+              ? `রেজিস্ট্রেশন সফল! স্বাগতম, ${profile.name}`
+              : `Welcome, ${profile.name}!`
+            : isBn
+              ? `স্বাগতম, ${profile.name}!`
+              : `Welcome, ${profile.name}!`
+        );
+      }
+    };
 
     const syncSignedInUser = async (fbUser: typeof auth.currentUser, attempt = 0) => {
       if (isDisposed) return;
@@ -374,27 +423,20 @@ export default function App() {
       }
 
       try {
-        const pendingCoins = guestCoinsRef.current;
+        const redirectMeta = peekPendingGoogleRedirectState();
+        const pendingCoins = Math.max(guestCoinsRef.current, redirectMeta?.guestCoins || 0);
         const profile = await ensureFirestoreUserProfile(fbUser, {
+          name: redirectMeta?.name,
+          phone: redirectMeta?.phone,
           guestCoins: pendingCoins
         });
         if (isDisposed) return;
         if (profile) {
-          if (pendingCoins > 0) setGuestCoins(0);
-          if (profile.isBlocked) {
-            setCurrentUser(null);
-            setBlockedNoticeUser({
-              name: profile.name,
-              phone: profile.phone || fbUser.email || '',
-              reason: profile.blockReason || 'অ্যাডমিন কর্তৃক অ্যাকাউন্ট স্থগিত'
-            });
-            setAuthModalOpen(true);
-          } else {
-            setCurrentUser(profile);
-            setBalance(profile.balance);
-            setPendingEscrowBalance(profile.pendingEscrowBalance);
-            setCoins(profile.coins);
-          }
+          applySignedInProfile(profile, fbUser.email, {
+            isNewSignup: redirectMeta?.mode === 'signup',
+            showWelcomeToast: Boolean(redirectMeta) || authModalOpenRef.current,
+            usedCoins: pendingCoins
+          });
         }
         setAuthReady(true);
       } catch (err) {
@@ -410,9 +452,78 @@ export default function App() {
           return;
         }
         console.error('Auth profile sync error:', err);
+        const msg = formatFirebaseAuthErrorMessage(err, languageRef.current === 'bn');
+        setAuthRedirectError(msg);
+        if (authModalOpenRef.current || peekPendingGoogleRedirectState()) {
+          setAuthModalOpen(true);
+          showToast(msg);
+        }
         setAuthReady(true);
       }
     };
+
+    if (pendingRedirect) {
+      setRedirectAuthChecking(true);
+    }
+
+    void getRedirectResult(auth)
+      .then(async result => {
+        if (isDisposed) return;
+        if (result?.user) {
+          const pendingCoins = Math.max(guestCoinsRef.current, pendingRedirect?.guestCoins || 0);
+          const profile = await ensureFirestoreUserProfile(result.user, {
+            name: pendingRedirect?.name,
+            phone: pendingRedirect?.phone,
+            guestCoins: pendingCoins
+          });
+          if (profile && !isDisposed) {
+            applySignedInProfile(profile, result.user.email, {
+              isNewSignup: pendingRedirect?.mode === 'signup',
+              showWelcomeToast: true,
+              usedCoins: pendingCoins
+            });
+          }
+          setAuthReady(true);
+          return;
+        }
+
+        if (pendingRedirect && !auth.currentUser) {
+          // Brief grace window for IndexedDB persistence hydration
+          await new Promise(resolve => setTimeout(resolve, 400));
+          if (!isDisposed && !auth.currentUser) {
+            clearPendingGoogleRedirectState();
+            const isBn = languageRef.current === 'bn';
+            const blockedMsg = isEmbeddedWebView()
+              ? isBn
+                ? 'ইন-অ্যাপ ব্রাউজার (WebView) থেকে Google রিডাইরেক্ট সেশন ধরে রাখা যায়নি। অনুগ্রহ করে মেনু (⋮) থেকে "Open in Chrome / Safari" চাপুন অথবা ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।'
+                : 'In-app WebView could not preserve Google redirect state. Please open in Chrome/Safari or sign in with Email & Password.'
+              : isBn
+                ? 'ব্রাউজারের প্রাইভেসি/কুকি সেটিংসের কারণে Google রিডাইরেক্ট সম্পন্ন হয়নি। অনুগ্রহ করে আবার Google বাটনে ট্যাপ করে পপআপ অনুমতি দিন অথবা ইমেইল ও পাসওয়ার্ড ব্যবহার করুন।'
+                : 'Browser privacy/cookie settings blocked the Google redirect session. Please tap Google Sign-In again (allowing popups) or use Email & Password.';
+            setAuthRedirectError(blockedMsg);
+            setAuthModalMode(pendingRedirect.mode);
+            setAuthModalOpen(true);
+          }
+        } else if (auth.currentUser) {
+          clearPendingGoogleRedirectState();
+        }
+      })
+      .catch(err => {
+        if (isDisposed) return;
+        clearPendingGoogleRedirectState();
+        console.warn('Google redirect sign-in check:', err);
+        const msg = formatFirebaseAuthErrorMessage(err, languageRef.current === 'bn');
+        setAuthRedirectError(msg);
+        if (pendingRedirect) {
+          setAuthModalMode(pendingRedirect.mode);
+        }
+        setAuthModalOpen(true);
+      })
+      .finally(() => {
+        if (!isDisposed) {
+          setRedirectAuthChecking(false);
+        }
+      });
 
     const unsubAuth = onAuthStateChanged(auth, fbUser => {
       if (retryTimer) {
@@ -435,7 +546,7 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       unsubAuth();
     };
-  }, []);
+  }, [showToast]);
 
   // =========================================================================
   // 3. AUTHENTICATED USER & ADMIN REAL-TIME FIRESTORE LISTENERS
@@ -794,6 +905,9 @@ export default function App() {
   // AUTH & LOGOUT HANDLERS
   // =========================================================================
   const handleAuthSuccess = (user: UserAccount, isNewSignup = false) => {
+    lastAuthToastUidRef.current = user.id;
+    clearPendingGoogleRedirectState();
+    setAuthRedirectError('');
     setCurrentUser(user);
     setBalance(user.balance);
     setPendingEscrowBalance(user.pendingEscrowBalance);
@@ -813,6 +927,9 @@ export default function App() {
 
   const handleLogout = async () => {
     playSound('click');
+    lastAuthToastUidRef.current = null;
+    clearPendingGoogleRedirectState();
+    setAuthRedirectError('');
     setAdminDeviceToken(null);
     setAdminDashboardModalOpen(false);
     setSecretAdminModalOpen(false);
@@ -1805,12 +1922,29 @@ export default function App() {
         />
       )}
 
+      {/* GOOGLE REDIRECT SIGN-IN LOADING OVERLAY */}
+      {redirectAuthChecking && !currentUser && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/75 backdrop-blur-sm px-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-6 py-5 shadow-2xl flex items-center gap-3 max-w-xs w-full">
+            <div className="w-6 h-6 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin shrink-0" />
+            <div className="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
+              {language === 'bn'
+                ? 'Google লগইন সম্পন্ন করা হচ্ছে...'
+                : 'Completing Google Sign-In...'}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FIREBASE AUTHENTICATION MODAL */}
       {authModalOpen && (
         <AuthModal
           isOpen={authModalOpen}
           initialMode={authModalMode}
-          onClose={() => setAuthModalOpen(false)}
+          onClose={() => {
+            setAuthModalOpen(false);
+            setAuthRedirectError('');
+          }}
           onSuccess={handleAuthSuccess}
           guestCoins={guestCoins}
           language={language}
@@ -1818,6 +1952,8 @@ export default function App() {
           blockedNoticeUser={blockedNoticeUser}
           onClearBlockedNotice={() => setBlockedNoticeUser(null)}
           onSubmitBlockedComplaint={handleSubmitBlockedUserComplaint}
+          externalError={authRedirectError}
+          onClearExternalError={() => setAuthRedirectError('')}
         />
       )}
 

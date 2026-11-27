@@ -27,7 +27,11 @@ import {
   googleProvider,
   ensureFirestoreUserProfile,
   savePendingSignupProfile,
-  clearPendingSignupProfile
+  clearPendingSignupProfile,
+  formatFirebaseAuthErrorMessage,
+  isEmbeddedWebView,
+  savePendingGoogleRedirectState,
+  clearPendingGoogleRedirectState
 } from '../firebase';
 import { UserAccount, Language } from '../types';
 import { playSound } from '../utils/audio';
@@ -43,6 +47,8 @@ interface AuthModalProps {
   blockedNoticeUser?: { name: string; phone: string; reason?: string } | null;
   onClearBlockedNotice?: () => void;
   onSubmitBlockedComplaint?: (name: string, phone: string, message: string) => void;
+  externalError?: string;
+  onClearExternalError?: () => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -55,7 +61,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = 'login',
   blockedNoticeUser = null,
   onClearBlockedNotice,
-  onSubmitBlockedComplaint
+  onSubmitBlockedComplaint,
+  externalError = '',
+  onClearExternalError
 }) => {
   const [mode, setMode] = useState<'login' | 'signup'>(initialMode);
 
@@ -104,65 +112,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   }, [blockedNoticeUser]);
 
-  const mapFirebaseAuthError = (err: unknown): string => {
-    const code = (err as { code?: string })?.code || '';
-    if (code === 'auth/user-not-found') {
-      return isBn ? 'এই জিমেইলে কোনো একাউন্ট নেই' : 'No account found for this Gmail/Email.';
-    }
-    if (code === 'auth/wrong-password') {
-      return isBn ? 'আপনার সঠিক পিন দিয়ে প্রবেশ করুন' : 'Please enter your correct PIN/password.';
-    }
-    if (code === 'auth/email-already-in-use') {
-      return isBn
-        ? 'এই জিমেইল ঠিকানায় ইতিমধ্যে অ্যাকাউন্ট রয়েছে! লগইন করুন অথবা Google দিয়ে প্রবেশ করুন।'
-        : 'Email already registered! Please sign in.';
-    }
-    if (code === 'auth/weak-password') {
-      return isBn
-        ? 'নিরাপত্তার স্বার্থে পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে!'
-        : 'Password must be at least 6 characters.';
-    }
-    if (code === 'auth/invalid-email') {
-      return isBn ? 'সঠিক জিমেইল / ইমেইল ঠিকানা লিখুন।' : 'Please enter a valid email address.';
-    }
-    if (code === 'auth/too-many-requests') {
-      return isBn
-        ? 'অতিরিক্ত ভুল চেষ্টার কারণে সাময়িকভাবে লগইন সীমিত করা হয়েছে। কিছুক্ষণ পর চেষ্টা করুন।'
-        : 'Too many failed attempts. Please try again later.';
-    }
-    if (code === 'auth/operation-not-allowed') {
-      return isBn
-        ? 'Firebase Console -> Authentication -> Sign-in method থেকে Email/Password প্রোভাইডার চালু করুন, অথবা উপরের Google বাটন দিয়ে লগইন করুন।'
-        : 'Enable Email/Password in Firebase Console -> Authentication -> Sign-in method, or use Google Sign-In above.';
-    }
-    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
-      return isBn ? 'গুগল লগইন পপআপ বন্ধ করা হয়েছে।' : 'Google sign-in popup was closed.';
-    }
-    if (code === 'auth/popup-blocked') {
-      return isBn
-        ? 'ব্রাউজার পপআপ ব্লক করেছে! অনুগ্রহ করে ব্রাউজারের পপআপ অনুমতি দিন অথবা ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।'
-        : 'Popup blocked by browser. Please allow popups or sign in with Email & Password.';
-    }
-    if (code === 'auth/unauthorized-domain') {
-      const host = typeof window !== 'undefined' ? window.location.hostname : '';
-      return isBn
-        ? `এই ডোমেইন (${host}) Firebase Console-এ অনুমোদিত নয়। Firebase Authentication -> Settings -> Authorized domains-এ যুক্ত করুন।`
-        : `Domain (${host}) is not authorized in Firebase Auth Settings -> Authorized domains.`;
-    }
-    if (code === 'auth/network-request-failed') {
-      return isBn
-        ? 'ইন্টারনেট সংযোগে সমস্যা হয়েছে। নেটওয়ার্ক চেক করে আবার চেষ্টা করুন।'
-        : 'Network error. Please check your internet connection and try again.';
-    }
-    if (code === 'auth/account-exists-with-different-credential') {
-      return isBn
-        ? 'এই জিমেইলে অন্য লগইন পদ্ধতি (ইমেইল/পাসওয়ার্ড) ব্যবহৃত হয়েছে। অনুগ্রহ করে সেই পদ্ধতিতে লগইন করুন।'
-        : 'An account already exists with this email using another sign-in method.';
-    }
-    return isBn
-      ? 'অথেনটিকেশন সম্পন্ন করা যায়নি। তথ্য যাচাই করে আবার চেষ্টা করুন।'
-      : 'Authentication failed. Please verify your details and try again.';
-  };
+  const mapFirebaseAuthError = useCallback(
+    (err: unknown): string => formatFirebaseAuthErrorMessage(err, isBn),
+    [isBn]
+  );
+
+  const completeGoogleUserLogin = useCallback(
+    async (fbUser: NonNullable<typeof auth.currentUser>) => {
+      const cleanPhone = phone.replace(/\D/g, '');
+      const profile = await ensureFirestoreUserProfile(fbUser, {
+        name: name.trim() || fbUser.displayName || undefined,
+        phone: cleanPhone || undefined,
+        guestCoins
+      });
+
+      if (profile && profile.isBlocked) {
+        playSound('error');
+        setDetectedBlockedUser({
+          name: profile.name,
+          phone: profile.phone || fbUser.email || '',
+          reason: profile.blockReason
+        });
+        setAppealName(profile.name);
+        setAppealPhone(profile.phone || fbUser.email || '');
+        setIsLoading(false);
+        return true;
+      }
+
+      if (profile) {
+        clearPendingGoogleRedirectState();
+        playSound('success');
+        onSuccess(profile, mode === 'signup');
+        return true;
+      }
+      return false;
+    },
+    [guestCoins, mode, name, onSuccess, phone]
+  );
 
   const resolveLoginError = async (err: unknown, userEmail: string): Promise<string> => {
     const code = (err as { code?: string })?.code || '';
@@ -191,55 +177,84 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const handleGoogleSignIn = async () => {
     setError('');
     setInfoNotice('');
+    if (onClearExternalError) onClearExternalError();
     setIsLoading(true);
     playSound('click');
 
+    let didStartRedirect = false;
+
     try {
       const cred = await signInWithPopup(auth, googleProvider);
-      const cleanPhone = phone.replace(/\D/g, '');
-      const profile = await ensureFirestoreUserProfile(cred.user, {
-        name: name.trim() || cred.user.displayName || undefined,
-        phone: cleanPhone || undefined,
-        guestCoins
-      });
-
-      if (profile && profile.isBlocked) {
-        playSound('error');
-        setDetectedBlockedUser({
-          name: profile.name,
-          phone: profile.phone || cred.user.email || '',
-          reason: profile.blockReason
-        });
-        setAppealName(profile.name);
-        setAppealPhone(profile.phone || cred.user.email || '');
-        setIsLoading(false);
-        return;
-      }
-
-      if (profile) {
-        playSound('success');
-        onSuccess(profile, mode === 'signup');
-      }
+      await completeGoogleUserLogin(cred.user);
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
+
+      // Some mobile browsers authenticate in the popup before opener messaging completes
       if (
-        (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') &&
-        typeof window !== 'undefined' &&
-        window.self === window.top
+        (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') &&
+        auth.currentUser &&
+        (auth.currentUser.emailVerified ||
+          auth.currentUser.providerData?.some(p => p.providerId === 'google.com'))
       ) {
         try {
+          const completed = await completeGoogleUserLogin(auth.currentUser);
+          if (completed) return;
+        } catch {
+          // Fall through to normal error reporting
+        }
+      }
+
+      const canFallbackToRedirect =
+        (code === 'auth/popup-blocked' ||
+          code === 'auth/operation-not-supported-in-this-environment' ||
+          code === 'auth/internal-error') &&
+        typeof window !== 'undefined' &&
+        window.self === window.top;
+
+      if (canFallbackToRedirect) {
+        if (isEmbeddedWebView()) {
+          playSound('error');
+          setError(
+            isBn
+              ? 'ইন-অ্যাপ ব্রাউজার (Facebook/Instagram/Telegram WebView) থেকে Google লগইন ব্লক থাকে। অনুগ্রহ করে উপরের মেনু (⋮) থেকে "Open in Chrome / Safari" চাপুন অথবা নিচের ইমেইল ও পাসওয়ার্ড ব্যবহার করুন।'
+              : 'In-app WebViews block Google Sign-In. Please tap the menu (⋮) and choose "Open in Chrome / Safari", or sign in with Email & Password below.'
+          );
+          return;
+        }
+
+        try {
+          savePendingGoogleRedirectState({
+            mode,
+            name: name.trim(),
+            phone: phone.replace(/\D/g, ''),
+            guestCoins
+          });
+          didStartRedirect = true;
           await signInWithRedirect(auth, googleProvider);
           return;
         } catch (redirectErr) {
+          didStartRedirect = false;
+          clearPendingGoogleRedirectState();
           playSound('error');
           setError(mapFirebaseAuthError(redirectErr));
           return;
         }
       }
+
       playSound('error');
-      setError(mapFirebaseAuthError(err));
+      if (isEmbeddedWebView() && code !== 'auth/popup-closed-by-user') {
+        setError(
+          isBn
+            ? 'ইন-অ্যাপ ব্রাউজার থেকে Google লগইন সম্পন্ন হয়নি। অনুগ্রহ করে Chrome বা Safari ব্রাউজারে ওপেন করুন অথবা ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করুন।'
+            : 'Google Sign-In cannot complete inside an in-app browser. Please open in Chrome/Safari or use Email & Password.'
+        );
+      } else {
+        setError(mapFirebaseAuthError(err));
+      }
     } finally {
-      setIsLoading(false);
+      if (!didStartRedirect) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -437,6 +452,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     };
   }, [isOpen, pendingVerificationEmail]);
 
+  // Recover if mobile browser completed Google auth in another tab/popup and returned focus
+  useEffect(() => {
+    if (!isOpen || !isLoading || pendingVerificationEmail || detectedBlockedUser) return;
+    const tryRecoverPopupSession = () => {
+      const fbUser = auth.currentUser;
+      const isGoogleUser = Boolean(fbUser?.providerData?.some(p => p.providerId === 'google.com'));
+      if (fbUser && (fbUser.emailVerified || isGoogleUser)) {
+        void completeGoogleUserLogin(fbUser).catch(() => {});
+      }
+    };
+    const onResume = () => {
+      if (document.visibilityState === 'visible') {
+        tryRecoverPopupSession();
+      }
+    };
+    document.addEventListener('visibilitychange', onResume);
+    window.addEventListener('focus', tryRecoverPopupSession);
+    return () => {
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', tryRecoverPopupSession);
+    };
+  }, [isOpen, isLoading, pendingVerificationEmail, detectedBlockedUser, completeGoogleUserLogin]);
+
   const handleResendVerification = async () => {
     if (!auth.currentUser) return;
     setError('');
@@ -536,6 +574,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 type="button"
                 onClick={() => {
                   playSound('click');
+                  if (onClearExternalError) onClearExternalError();
                   onClose();
                 }}
                 className="w-10 h-10 rounded-2xl bg-white/95 hover:bg-rose-600 text-rose-600 hover:text-white border-2 border-white/60 font-black text-2xl leading-none flex items-center justify-center transition-all cursor-pointer shadow-md shrink-0"
@@ -727,6 +766,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setMode('login');
                   setError('');
                   setInfoNotice('');
+                  if (onClearExternalError) onClearExternalError();
                 }}
                 className={`flex-1 py-3 text-xs sm:text-sm font-bold text-center border-b-2 transition-all cursor-pointer ${
                   mode === 'login'
@@ -743,6 +783,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   setMode('signup');
                   setError('');
                   setInfoNotice('');
+                  if (onClearExternalError) onClearExternalError();
                 }}
                 className={`flex-1 py-3 text-xs sm:text-sm font-bold text-center border-b-2 transition-all cursor-pointer ${
                   mode === 'signup'
@@ -762,16 +803,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 onClick={handleGoogleSignIn}
                 className="w-full py-3 px-4 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-750 border-2 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-white font-extrabold text-xs sm:text-sm shadow-sm flex items-center justify-center gap-2.5 cursor-pointer transition-all disabled:opacity-50"
               >
-                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                  <path
-                    fill="#EA4335"
-                    d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.2 14.7 2.2 12 2.2 6.6 2.2 2.2 6.6 2.2 12S6.6 21.8 12 21.8c5.7 0 9.5-4 9.5-9.6 0-.6-.1-1.1-.2-1.6H12z"
-                  />
-                </svg>
+                {isLoading ? (
+                  <RefreshCw className="w-4 h-4 shrink-0 animate-spin text-emerald-600" />
+                ) : (
+                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.8-5.5 3.8-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.2.8 3.9 1.5l2.7-2.6C16.9 3.2 14.7 2.2 12 2.2 6.6 2.2 2.2 6.6 2.2 12S6.6 21.8 12 21.8c5.7 0 9.5-4 9.5-9.6 0-.6-.1-1.1-.2-1.6H12z"
+                    />
+                  </svg>
+                )}
                 <span>
-                  {isBn
-                    ? 'Google (Gmail) দিয়ে তাৎক্ষণিক প্রবেশ করুন'
-                    : 'Continue Instantly with Google'}
+                  {isLoading
+                    ? isBn
+                      ? 'Google অ্যাকাউন্ট যাচাই হচ্ছে...'
+                      : 'Completing Google Sign-In...'
+                    : isBn
+                      ? 'Google (Gmail) দিয়ে তাৎক্ষণিক প্রবেশ করুন'
+                      : 'Continue Instantly with Google'}
                 </span>
               </button>
 
@@ -873,10 +922,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </div>
                 </div>
 
-                {error && (
+                {(error || externalError) && (
                   <div className="text-xs text-rose-600 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-950/50 p-3 rounded-xl border border-rose-200 dark:border-rose-800 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                    <span>{error}</span>
+                    <span>{error || externalError}</span>
                   </div>
                 )}
 

@@ -766,10 +766,11 @@ async function callOpenAiCompatibleProvider(params: {
       model === 'llama-3.3-70b-versatile' || model === 'llama-3.1-8b-instant';
     const { messages } = buildOpenAiMessages(systemInstruction, turns, !isTextOnlyModel);
 
+    const cleanApiKey = apiKey.trim();
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${cleanApiKey}`,
       'User-Agent': 'MicroEarnBD-Support/1.0',
     };
     if (provider === 'openrouter') {
@@ -794,20 +795,30 @@ async function callOpenAiCompatibleProvider(params: {
     }
 
     const errText = await upstreamRes.text().catch(() => '');
-    let parsedErrMsg = errText;
+    let parsedErrMsg = errText.trim();
     try {
       const errJson = JSON.parse(errText) as {
-        error?: { message?: string; code?: string } | string;
+        error?: { message?: string; code?: string; type?: string } | string;
+        message?: string;
       };
       if (typeof errJson?.error === 'string') {
-        parsedErrMsg = errJson.error;
+        parsedErrMsg = errJson.error.trim();
       } else if (errJson?.error) {
-        const msgPart = errJson.error.message || '';
-        const codePart = errJson.error.code || '';
-        parsedErrMsg = codePart && msgPart ? `[${codePart}] ${msgPart}` : msgPart || codePart || errText;
+        const msgPart = (errJson.error.message || '').trim();
+        const codePart = (errJson.error.code || '').trim();
+        const typePart = (errJson.error.type || '').trim();
+        if (msgPart && codePart && !msgPart.includes(codePart)) {
+          parsedErrMsg = `[${codePart}] ${msgPart}`;
+        } else {
+          parsedErrMsg = msgPart || codePart || typePart || parsedErrMsg;
+        }
+      } else if (typeof errJson?.message === 'string' && errJson.message.trim()) {
+        parsedErrMsg = errJson.message.trim();
       }
     } catch {
-      // Keep raw text
+      if (parsedErrMsg.length > 500) {
+        parsedErrMsg = `${parsedErrMsg.slice(0, 500)}...`;
+      }
     }
 
     const errObj = new ProviderHttpError(
@@ -856,6 +867,20 @@ function classifyAiError(
   const status = (err as { status?: number })?.status;
   const providerLabel =
     provider === 'groq' ? 'Groq' : provider === 'openrouter' ? 'OpenRouter' : 'Google Gemini';
+
+  if (provider === 'groq') {
+    const exactStatus =
+      typeof status === 'number' && Number.isFinite(status) && status >= 400 && status <= 599
+        ? status
+        : 502;
+    const cleanDetail = rawMessage.trim() || `HTTP ${exactStatus} from Groq API`;
+    return {
+      status: exactStatus,
+      message: cleanDetail.startsWith(`Groq API Error (HTTP ${exactStatus})`)
+        ? cleanDetail
+        : `Groq API Error (HTTP ${exactStatus}): ${cleanDetail}`,
+    };
+  }
 
   if (isInvalidAuthKeyError(status, lower)) {
     return {
@@ -1042,6 +1067,7 @@ function streamOpenAiResponseToClientSse(params: {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
+      ...CORS_HEADERS,
     },
   });
 }
@@ -1135,16 +1161,39 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
 
   // Groq or OpenRouter execution path
   if (resolved.provider === 'groq' || resolved.provider === 'openrouter') {
-    try {
-      const reqUrl = new URL(request.url);
-      const upstreamRes = await callOpenAiCompatibleProvider({
-        provider: resolved.provider,
-        apiKey: resolved.apiKey,
+    const reqUrl = new URL(request.url);
+    const runOpenAiCompatible = (keyToUse: string) =>
+      callOpenAiCompatibleProvider({
+        provider: resolved.provider as 'groq' | 'openrouter',
+        apiKey: keyToUse,
         systemInstruction,
         turns: sanitizedTurns,
         stream: wantsStream,
         originUrl: reqUrl.origin,
       });
+
+    try {
+      let upstreamRes: Response;
+      try {
+        upstreamRes = await runOpenAiCompatible(resolved.apiKey);
+      } catch (primaryErr: unknown) {
+        const fallbackGroqKey = getEnvKeyForProvider(env, 'groq');
+        const primaryStatus = (primaryErr as { status?: number })?.status;
+        const primaryMsgLower = ((primaryErr as { message?: string })?.message || '').toLowerCase();
+        const isInvalidGroqKey =
+          resolved.provider === 'groq' &&
+          Boolean(fallbackGroqKey) &&
+          fallbackGroqKey !== resolved.apiKey.trim() &&
+          (primaryStatus === 401 ||
+            primaryStatus === 403 ||
+            isInvalidAuthKeyError(primaryStatus, primaryMsgLower));
+
+        if (!isInvalidGroqKey) {
+          throw primaryErr;
+        }
+        console.warn('[Worker SupportChat] Stored Groq key rejected; falling back to env.GROQ_API_KEY.');
+        upstreamRes = await runOpenAiCompatible(fallbackGroqKey);
+      }
 
       if (!wantsStream) {
         const json = (await upstreamRes.json()) as {

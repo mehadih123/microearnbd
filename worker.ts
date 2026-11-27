@@ -26,12 +26,21 @@ const FIRESTORE_DOC_BASE = `https://firestore.googleapis.com/v1/projects/${FIREB
 
 const GEMINI_API_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
 const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
-const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
+const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile'] as const;
 const GROQ_VISION_MODELS = [
   'meta-llama/llama-4-scout-17b-16e-instruct',
   'meta-llama/llama-4-maverick-17b-128e-instruct',
   ...GROQ_TEXT_MODELS,
 ] as const;
+const GROQ_EXCLUDED_MODELS = new Set([
+  'llama-3.1-8b-instant',
+  'llama3-8b-8192',
+  'llama3-70b-8192',
+  'mixtral-8x7b-32768',
+  'gemma2-9b-it',
+  'gemma-7b-it',
+  'llama-3.1-70b-versatile',
+]);
 const OPENROUTER_MODELS = ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free'] as const;
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -735,6 +744,87 @@ async function generateGeminiOnceWithFallback(
   throw lastError;
 }
 
+const groqModelsCache = new Map<string, { models: string[]; expiresAtMs: number }>();
+
+function isGroqVisionModel(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  return (
+    lower.includes('scout') ||
+    lower.includes('maverick') ||
+    lower.includes('llama-4') ||
+    lower.includes('vision')
+  );
+}
+
+function isGroqChatModel(modelId: string): boolean {
+  const lower = modelId.trim().toLowerCase();
+  if (!lower || GROQ_EXCLUDED_MODELS.has(lower)) return false;
+  return !/(whisper|tts|playai|orpheus|guard|embedding|rerank|moderation|audio|speech)/.test(lower);
+}
+
+function rankGroqChatModels(ids: string[], preferVision: boolean): string[] {
+  const score = (id: string): number => {
+    const lower = id.toLowerCase();
+    if (preferVision) {
+      if (isGroqVisionModel(lower)) {
+        return lower.includes('scout') ? 0 : 1;
+      }
+      if (lower === 'llama-3.3-70b-versatile') return 2;
+      if (lower.includes('gpt-oss-120b') || lower.includes('qwen') || lower.includes('llama-3.3')) return 3;
+      return 4;
+    }
+    if (lower === 'llama-3.3-70b-versatile') return 0;
+    if (isGroqVisionModel(lower)) return 1;
+    if (lower.includes('gpt-oss-120b') || lower.includes('qwen') || lower.includes('deepseek') || lower.includes('kimi')) {
+      return 2;
+    }
+    return 3;
+  };
+
+  return [...new Set(ids)]
+    .filter(isGroqChatModel)
+    .sort((a, b) => score(a) - score(b));
+}
+
+async function fetchActiveGroqChatModels(apiKey: string, preferVision: boolean): Promise<string[]> {
+  const cleanKey = apiKey.trim();
+  const now = Date.now();
+  const cached = groqModelsCache.get(cleanKey);
+  if (cached && cached.expiresAtMs > now) {
+    return rankGroqChatModels(cached.models, preferVision);
+  }
+
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${cleanKey}`,
+        'User-Agent': 'MicroEarnBD-Support/1.0',
+      },
+    });
+    if (!res.ok) {
+      return [];
+    }
+    const data = (await res.json()) as {
+      data?: Array<{ id?: string; active?: boolean }>;
+    };
+    const rawIds = (data.data || [])
+      .filter(item => item && typeof item.id === 'string' && item.active !== false)
+      .map(item => (item.id || '').trim())
+      .filter(Boolean);
+
+    if (groqModelsCache.size >= 10) {
+      const oldestKey = groqModelsCache.keys().next().value;
+      if (oldestKey) groqModelsCache.delete(oldestKey);
+    }
+    groqModelsCache.set(cleanKey, { models: rawIds, expiresAtMs: now + 5 * 60_000 });
+    return rankGroqChatModels(rawIds, preferVision);
+  } catch {
+    return [];
+  }
+}
+
 async function callOpenAiCompatibleProvider(params: {
   provider: 'groq' | 'openrouter';
   apiKey: string;
@@ -750,23 +840,26 @@ async function callOpenAiCompatibleProvider(params: {
       : 'https://openrouter.ai/api/v1/chat/completions';
 
   const probePayload = buildOpenAiMessages(systemInstruction, turns, true);
-  const models: readonly string[] =
+  const models: string[] =
     provider === 'groq'
-      ? probePayload.hasImages
-        ? GROQ_VISION_MODELS
-        : GROQ_TEXT_MODELS
-      : OPENROUTER_MODELS;
+      ? [...(probePayload.hasImages ? GROQ_VISION_MODELS : GROQ_TEXT_MODELS)]
+      : [...OPENROUTER_MODELS];
 
+  const attemptedModels = new Set<string>();
+  let discoveredGroqModels = false;
   let lastError: ProviderHttpError | null = null;
+  const cleanApiKey = apiKey.trim();
 
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
-    const hasNext = i < models.length - 1;
-    const isTextOnlyModel =
-      model === 'llama-3.3-70b-versatile' || model === 'llama-3.1-8b-instant';
-    const { messages } = buildOpenAiMessages(systemInstruction, turns, !isTextOnlyModel);
+    if (attemptedModels.has(model)) continue;
+    attemptedModels.add(model);
 
-    const cleanApiKey = apiKey.trim();
+    const allowImagesForModel =
+      provider === 'groq'
+        ? probePayload.hasImages && isGroqVisionModel(model)
+        : true;
+    const { messages } = buildOpenAiMessages(systemInstruction, turns, allowImagesForModel);
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'Content-Type': 'application/json',
@@ -831,6 +924,21 @@ async function callOpenAiCompatibleProvider(params: {
 
     const lowerErr = errObj.message.toLowerCase();
     const isAuthFailure = isInvalidAuthKeyError(upstreamRes.status, lowerErr);
+
+    if (provider === 'groq' && !isAuthFailure && !discoveredGroqModels) {
+      discoveredGroqModels = true;
+      const activeModels = await fetchActiveGroqChatModels(cleanApiKey, probePayload.hasImages);
+      let added = 0;
+      for (const candidate of activeModels) {
+        if (!attemptedModels.has(candidate) && !models.includes(candidate)) {
+          models.push(candidate);
+          added += 1;
+          if (added >= 3) break;
+        }
+      }
+    }
+
+    const hasNext = models.slice(i + 1).some(candidate => !attemptedModels.has(candidate));
     const shouldTryNext =
       hasNext &&
       !isAuthFailure &&
@@ -874,11 +982,78 @@ function classifyAiError(
         ? status
         : 502;
     const cleanDetail = rawMessage.trim() || `HTTP ${exactStatus} from Groq API`;
+
+    if (isInvalidAuthKeyError(status, lower)) {
+      return {
+        status: exactStatus,
+        message: isBn
+          ? `Groq API Key-টি সঠিক নয় বা মেয়াদোত্তীর্ণ। অনুগ্রহ করে অ্যাডমিন প্যানেল → AI Support Settings অথবা Worker Secrets (GROQ_API_KEY) যাচাই করুন। (HTTP ${exactStatus}: ${cleanDetail})`
+          : `Groq API key is invalid or expired. Please verify Admin Panel → AI Support Settings or GROQ_API_KEY. (HTTP ${exactStatus}: ${cleanDetail})`,
+      };
+    }
+
+    if (status === 403 || lower.includes('permission_denied') || lower.includes('forbidden')) {
+      return {
+        status: exactStatus,
+        message: isBn
+          ? `Groq API-তে অ্যাক্সেস অনুমোদিত নয় বা সীমাবদ্ধ করা হয়েছে। অনুগ্রহ করে API Key পারমিশন যাচাই করুন। (HTTP ${exactStatus}: ${cleanDetail})`
+          : `Groq API access was denied or restricted. (HTTP ${exactStatus}: ${cleanDetail})`,
+      };
+    }
+
+    if (isModelNotFoundError(err)) {
+      return {
+        status: exactStatus,
+        message: isBn
+          ? `নির্বাচিত Groq মডেলটি বর্তমানে এই API Key-এর জন্য সক্রিয় বা উপলব্ধ নয়। (HTTP ${exactStatus}: ${cleanDetail})`
+          : `No compatible active Groq model was available for this API key. (HTTP ${exactStatus}: ${cleanDetail})`,
+      };
+    }
+
+    if (
+      status === 402 ||
+      status === 429 ||
+      status === 503 ||
+      lower.includes('resource_exhausted') ||
+      lower.includes('quota') ||
+      lower.includes('insufficient_quota') ||
+      lower.includes('rate limit') ||
+      lower.includes('rate_limit') ||
+      lower.includes('tokens per') ||
+      lower.includes('requests per') ||
+      lower.includes('credit') ||
+      lower.includes('too many requests') ||
+      lower.includes('overloaded') ||
+      lower.includes('unavailable')
+    ) {
+      return {
+        status: exactStatus,
+        message: isBn
+          ? `Groq AI-এর রিকোয়েস্ট বা টোকেন সীমা সাময়িকভাবে শেষ হয়ে গেছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন। (HTTP ${exactStatus}: ${cleanDetail})`
+          : `Groq API rate limit or quota was temporarily reached. Please retry shortly. (HTTP ${exactStatus}: ${cleanDetail})`,
+      };
+    }
+
+    if (
+      status === 400 ||
+      status === 413 ||
+      lower.includes('context_length') ||
+      lower.includes('max_tokens') ||
+      lower.includes('too large')
+    ) {
+      return {
+        status: exactStatus,
+        message: isBn
+          ? `Groq API অনুরোধটি গ্রহণ করতে পারেনি (মেসেজ খুব বড় বা ফরম্যাট ত্রুটি হতে পারে)। অনুগ্রহ করে বার্তা সংক্ষিপ্ত করে আবার চেষ্টা করুন। (HTTP ${exactStatus}: ${cleanDetail})`
+          : `Groq API could not process this request. Please try a shorter message. (HTTP ${exactStatus}: ${cleanDetail})`,
+      };
+    }
+
     return {
       status: exactStatus,
-      message: cleanDetail.startsWith(`Groq API Error (HTTP ${exactStatus})`)
-        ? cleanDetail
-        : `Groq API Error (HTTP ${exactStatus}): ${cleanDetail}`,
+      message: isBn
+        ? `Groq AI সার্ভারের সাথে সংযোগ করতে সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন। (HTTP ${exactStatus}: ${cleanDetail})`
+        : `Unable to complete Groq AI request right now. (HTTP ${exactStatus}: ${cleanDetail})`,
     };
   }
 

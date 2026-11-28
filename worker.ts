@@ -24,7 +24,12 @@ const FIREBASE_PROJECT_ID = 'taskvaultbd';
 const FIRESTORE_DATABASE_ID = 'ai-studio-mehadiearnresell-16cf3cfa-0cf8-4ccc-8ae2-79dfaaa7b23b';
 const FIRESTORE_DOC_BASE = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents`;
 
-const GEMINI_API_MODELS = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
+const GEMINI_API_MODELS = [
+  'gemini-4-hydrogen',
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+] as const;
 const VERTEX_EXPRESS_MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite'] as const;
 const GROQ_TEXT_MODELS = ['llama-3.3-70b-versatile'] as const;
 const GROQ_VISION_MODELS = [
@@ -101,6 +106,9 @@ interface ResolvedAiConfig {
   enabled: boolean;
   provider: AiProvider;
   apiKey: string;
+  geminiKey: string;
+  groqKey: string;
+  openrouterKey: string;
   source: 'firestore_admin_secret' | 'env_fallback' | 'none';
   disabledByAdmin: boolean;
 }
@@ -130,6 +138,62 @@ function sanitizeProvider(raw: unknown): AiProvider {
     return raw;
   }
   return 'gemini';
+}
+
+function inferProviderFromKey(key: string): AiProvider | null {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  if (/^(?:AIza|AQ)/i.test(trimmed)) return 'gemini';
+  if (/^gsk_/i.test(trimmed)) return 'groq';
+  if (/^sk-or-/i.test(trimmed)) return 'openrouter';
+  return null;
+}
+
+function unpackAiSupportKeys(
+  rawApiKey: string,
+  fallbackProvider: AiProvider
+): { geminiKey: string; groqKey: string; openrouterKey: string } {
+  const trimmed = (rawApiKey || '').trim();
+  const result = { geminiKey: '', groqKey: '', openrouterKey: '' };
+  if (!trimmed) return result;
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        gemini?: unknown;
+        groq?: unknown;
+        openrouter?: unknown;
+        g?: unknown;
+        q?: unknown;
+        o?: unknown;
+      };
+      result.geminiKey =
+        typeof (parsed.gemini ?? parsed.g) === 'string'
+          ? String(parsed.gemini ?? parsed.g).trim()
+          : '';
+      result.groqKey =
+        typeof (parsed.groq ?? parsed.q) === 'string'
+          ? String(parsed.groq ?? parsed.q).trim()
+          : '';
+      result.openrouterKey =
+        typeof (parsed.openrouter ?? parsed.o) === 'string'
+          ? String(parsed.openrouter ?? parsed.o).trim()
+          : '';
+      return result;
+    } catch {
+      // Treat malformed JSON as plain key string
+    }
+  }
+
+  const inferred = inferProviderFromKey(trimmed) || fallbackProvider;
+  if (inferred === 'groq') {
+    result.groqKey = trimmed;
+  } else if (inferred === 'openrouter') {
+    result.openrouterKey = trimmed;
+  } else {
+    result.geminiKey = trimmed;
+  }
+  return result;
 }
 
 function base64UrlEncodeBytes(bytes: Uint8Array): string {
@@ -265,6 +329,10 @@ function getEnvKeyForProvider(env: CfWorkerEnv, provider: AiProvider): string {
 }
 
 async function resolveAiConfig(env: CfWorkerEnv, request?: Request): Promise<ResolvedAiConfig> {
+  const envGemini = getEnvKeyForProvider(env, 'gemini');
+  const envGroq = getEnvKeyForProvider(env, 'groq');
+  const envOpenRouter = getEnvKeyForProvider(env, 'openrouter');
+
   // 1. Check non-secret public status first so Admin ON/OFF switch always enforces immediately
   const statusFields = await fetchFirestoreDocument('siteSettings/aiStatus');
   const statusEnabled =
@@ -278,6 +346,9 @@ async function resolveAiConfig(env: CfWorkerEnv, request?: Request): Promise<Res
       enabled: false,
       provider: statusProvider,
       apiKey: '',
+      geminiKey: '',
+      groqKey: '',
+      openrouterKey: '',
       source: 'firestore_admin_secret',
       disabledByAdmin: true,
     };
@@ -300,80 +371,85 @@ async function resolveAiConfig(env: CfWorkerEnv, request?: Request): Promise<Res
         ? secretFields.enabled.booleanValue
         : true;
     const provider = sanitizeProvider(secretFields.provider?.stringValue);
-    const firestoreKey = (secretFields.apiKey?.stringValue || '').trim();
+    const firestoreRawKey = (secretFields.apiKey?.stringValue || '').trim();
 
     if (!enabled) {
       return {
         enabled: false,
         provider,
         apiKey: '',
+        geminiKey: '',
+        groqKey: '',
+        openrouterKey: '',
         source: 'firestore_admin_secret',
         disabledByAdmin: true,
       };
     }
 
-    if (firestoreKey) {
+    const stored = unpackAiSupportKeys(firestoreRawKey, provider);
+    const geminiKey = stored.geminiKey || envGemini;
+    const groqKey = stored.groqKey || envGroq;
+    const openrouterKey = stored.openrouterKey || envOpenRouter;
+
+    const effectiveProvider: AiProvider =
+      provider === 'openrouter' && openrouterKey
+        ? 'openrouter'
+        : geminiKey
+          ? 'gemini'
+          : groqKey
+            ? 'groq'
+            : openrouterKey
+              ? 'openrouter'
+              : provider;
+
+    const primaryKey =
+      effectiveProvider === 'openrouter'
+        ? openrouterKey
+        : effectiveProvider === 'groq'
+          ? groqKey
+          : geminiKey;
+
+    if (primaryKey) {
       return {
         enabled: true,
-        provider,
-        apiKey: firestoreKey,
-        source: 'firestore_admin_secret',
+        provider: effectiveProvider,
+        apiKey: primaryKey,
+        geminiKey,
+        groqKey,
+        openrouterKey,
+        source: firestoreRawKey ? 'firestore_admin_secret' : 'env_fallback',
         disabledByAdmin: false,
       };
     }
-
-    const providerEnvKey = getEnvKeyForProvider(env, provider);
-    if (providerEnvKey) {
-      return {
-        enabled: true,
-        provider,
-        apiKey: providerEnvKey,
-        source: 'env_fallback',
-        disabledByAdmin: false,
-      };
-    }
   }
 
-  // 3. Fallback to Worker environment secrets (matching preferred provider first, then Gemini)
-  const preferredEnvKey = getEnvKeyForProvider(env, statusProvider);
-  if (preferredEnvKey) {
-    return {
-      enabled: true,
-      provider: statusProvider,
-      apiKey: preferredEnvKey,
-      source: 'env_fallback',
-      disabledByAdmin: false,
-    };
-  }
+  // 3. Fallback to Worker environment secrets (always prioritizing Gemini first if present, with Groq backup)
+  const effectiveProvider: AiProvider =
+    statusProvider === 'openrouter' && envOpenRouter
+      ? 'openrouter'
+      : envGemini
+        ? 'gemini'
+        : envGroq
+          ? 'groq'
+          : envOpenRouter
+            ? 'openrouter'
+            : statusProvider;
 
-  const geminiFallback = getEnvKeyForProvider(env, 'gemini');
-  if (geminiFallback) {
-    return {
-      enabled: true,
-      provider: 'gemini',
-      apiKey: geminiFallback,
-      source: 'env_fallback',
-      disabledByAdmin: false,
-    };
-  }
+  const primaryEnvKey =
+    effectiveProvider === 'openrouter'
+      ? envOpenRouter
+      : effectiveProvider === 'groq'
+        ? envGroq
+        : envGemini;
 
-  const groqFallback = getEnvKeyForProvider(env, 'groq');
-  if (groqFallback) {
+  if (primaryEnvKey) {
     return {
       enabled: true,
-      provider: 'groq',
-      apiKey: groqFallback,
-      source: 'env_fallback',
-      disabledByAdmin: false,
-    };
-  }
-
-  const openRouterFallback = getEnvKeyForProvider(env, 'openrouter');
-  if (openRouterFallback) {
-    return {
-      enabled: true,
-      provider: 'openrouter',
-      apiKey: openRouterFallback,
+      provider: effectiveProvider,
+      apiKey: primaryEnvKey,
+      geminiKey: envGemini,
+      groqKey: envGroq,
+      openrouterKey: envOpenRouter,
       source: 'env_fallback',
       disabledByAdmin: false,
     };
@@ -383,6 +459,9 @@ async function resolveAiConfig(env: CfWorkerEnv, request?: Request): Promise<Res
     enabled: true,
     provider: statusProvider,
     apiKey: '',
+    geminiKey: '',
+    groqKey: '',
+    openrouterKey: '',
     source: 'none',
     disabledByAdmin: false,
   };
@@ -449,6 +528,15 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder('utf-8').decode(bytes);
 }
 
+function sniffMimeFromBase64(base64Data: string): string {
+  if (base64Data.startsWith('iVBORw')) return 'image/png';
+  if (base64Data.startsWith('/9j/')) return 'image/jpeg';
+  if (base64Data.startsWith('R0lGOD')) return 'image/gif';
+  if (base64Data.startsWith('UklGR')) return 'image/webp';
+  if (base64Data.startsWith('JVBERi')) return 'application/pdf';
+  return '';
+}
+
 function extractNormalizedAttachment(raw: ChatAttachmentInput): {
   mime: string;
   fileName: string;
@@ -471,12 +559,17 @@ function extractNormalizedAttachment(raw: ChatAttachmentInput): {
   }
 
   base64Data = base64Data.replace(/\s+/g, '');
-  const effectiveRawMime = rawMime || detectedDataMime;
-  const mime = effectiveRawMime === 'image/jpg' ? 'image/jpeg' : effectiveRawMime;
-
   if (!base64Data || base64Data.length > 6_500_000) {
     return null;
   }
+
+  const effectiveRawMime =
+    rawMime && rawMime !== 'application/octet-stream'
+      ? rawMime
+      : detectedDataMime && detectedDataMime !== 'application/octet-stream'
+        ? detectedDataMime
+        : sniffMimeFromBase64(base64Data) || rawMime || detectedDataMime;
+  const mime = effectiveRawMime === 'image/jpg' ? 'image/jpeg' : effectiveRawMime;
 
   return { mime, fileName, base64Data };
 }
@@ -686,16 +779,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+type GeminiEndpointMode = 'dev' | 'vertex';
+
 interface GeminiClientContext {
   ai: GoogleGenAI;
+  mode: GeminiEndpointMode;
   isVertexExpress: boolean;
   models: readonly string[];
 }
 
-function createGeminiClient(apiKey: string): GeminiClientContext {
-  const isVertexExpress = apiKey.startsWith('AQ.');
+interface VerifiedGeminiStream {
+  firstChunk: { text?: string } | null;
+  iterator: AsyncIterator<{ text?: string }>;
+}
+
+const geminiModeCache = new Map<string, { mode: GeminiEndpointMode; expiresAtMs: number }>();
+
+function createGeminiClient(apiKey: string, mode: GeminiEndpointMode = 'dev'): GeminiClientContext {
+  const isVertexExpress = mode === 'vertex';
   const ai = new GoogleGenAI({
-    apiKey,
+    apiKey: apiKey.trim(),
     ...(isVertexExpress ? { vertexai: true } : {}),
     httpOptions: {
       headers: {
@@ -706,16 +809,58 @@ function createGeminiClient(apiKey: string): GeminiClientContext {
 
   return {
     ai,
+    mode,
     isVertexExpress,
     models: isVertexExpress ? VERTEX_EXPRESS_MODELS : GEMINI_API_MODELS,
   };
 }
 
-async function createGeminiStreamWithRetry(
+function getGeminiModesToTry(apiKey: string): GeminiEndpointMode[] {
+  const cleanKey = apiKey.trim();
+  const isAqKey = /^AQ/i.test(cleanKey);
+  const cached = geminiModeCache.get(cleanKey);
+  if (cached && cached.expiresAtMs > Date.now()) {
+    return isAqKey
+      ? cached.mode === 'vertex'
+        ? ['vertex', 'dev']
+        : ['dev', 'vertex']
+      : [cached.mode];
+  }
+  return isAqKey ? ['dev', 'vertex'] : ['dev'];
+}
+
+function rememberGeminiMode(apiKey: string, mode: GeminiEndpointMode) {
+  const cleanKey = apiKey.trim();
+  if (!cleanKey) return;
+  if (geminiModeCache.size >= 20) {
+    const oldest = geminiModeCache.keys().next().value;
+    if (oldest) geminiModeCache.delete(oldest);
+  }
+  geminiModeCache.set(cleanKey, { mode, expiresAtMs: Date.now() + 10 * 60_000 });
+}
+
+function shouldTryAlternateGeminiMode(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  const msg = ((err as { message?: string })?.message || '').toLowerCase();
+  return (
+    status === 400 ||
+    status === 401 ||
+    status === 403 ||
+    status === 404 ||
+    msg.includes('permission_denied') ||
+    msg.includes('permission denied') ||
+    msg.includes('api_key_invalid') ||
+    msg.includes('api key not valid') ||
+    msg.includes('credentials') ||
+    isModelNotFoundError(err)
+  );
+}
+
+async function openGeminiStreamForContext(
   gemini: GeminiClientContext,
   systemInstruction: string,
   contents: Content[]
-) {
+): Promise<VerifiedGeminiStream> {
   const modelsToTry = gemini.models;
   let lastError: unknown;
 
@@ -726,7 +871,7 @@ async function createGeminiStreamWithRetry(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        return await gemini.ai.models.generateContentStream({
+        const stream = await gemini.ai.models.generateContentStream({
           model: modelName,
           contents,
           config: {
@@ -736,6 +881,12 @@ async function createGeminiStreamWithRetry(
               : {}),
           },
         });
+        const iterator = (stream as AsyncIterable<{ text?: string }>)[Symbol.asyncIterator]();
+        const firstStep = await iterator.next();
+        return {
+          firstChunk: firstStep.done ? null : firstStep.value,
+          iterator,
+        };
       } catch (err: unknown) {
         lastError = err;
         const status = (err as { status?: number })?.status;
@@ -750,7 +901,7 @@ async function createGeminiStreamWithRetry(
           if (hasNextModel) break;
           throw err;
         }
-        await sleep(350 * Math.pow(2, attempt - 1));
+        await sleep(300 * Math.pow(2, attempt - 1));
       }
     }
   }
@@ -758,7 +909,44 @@ async function createGeminiStreamWithRetry(
   throw lastError;
 }
 
-async function generateGeminiOnceWithFallback(
+async function openVerifiedGeminiStreamWithKeys(
+  keysToTry: string[],
+  systemInstruction: string,
+  contents: Content[]
+): Promise<VerifiedGeminiStream> {
+  let lastError: unknown;
+
+  for (const key of keysToTry) {
+    const cleanKey = key.trim();
+    if (!cleanKey) continue;
+    const modes = getGeminiModesToTry(cleanKey);
+
+    for (let i = 0; i < modes.length; i++) {
+      const mode = modes[i];
+      const gemini = createGeminiClient(cleanKey, mode);
+      try {
+        const verified = await openGeminiStreamForContext(gemini, systemInstruction, contents);
+        rememberGeminiMode(cleanKey, mode);
+        return verified;
+      } catch (err: unknown) {
+        lastError = err;
+        if (i < modes.length - 1 && shouldTryAlternateGeminiMode(err)) {
+          console.warn(
+            `[Worker SupportChat] Gemini (${mode}) rejected or unavailable for key prefix ${cleanKey.slice(0, 4)}...; trying ${modes[i + 1]} mode.`
+          );
+          continue;
+        }
+        if (!shouldTryAlternateGeminiMode(err)) {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError || new ProviderHttpError('gemini', 503, 'Gemini API request failed.');
+}
+
+async function generateGeminiOnceForContext(
   gemini: GeminiClientContext,
   systemInstruction: string,
   contents: Content[]
@@ -791,6 +979,43 @@ async function generateGeminiOnceWithFallback(
   }
 
   throw lastError;
+}
+
+async function generateGeminiOnceWithKeys(
+  keysToTry: string[],
+  systemInstruction: string,
+  contents: Content[]
+) {
+  let lastError: unknown;
+
+  for (const key of keysToTry) {
+    const cleanKey = key.trim();
+    if (!cleanKey) continue;
+    const modes = getGeminiModesToTry(cleanKey);
+
+    for (let i = 0; i < modes.length; i++) {
+      const mode = modes[i];
+      const gemini = createGeminiClient(cleanKey, mode);
+      try {
+        const result = await generateGeminiOnceForContext(gemini, systemInstruction, contents);
+        rememberGeminiMode(cleanKey, mode);
+        return result;
+      } catch (err: unknown) {
+        lastError = err;
+        if (i < modes.length - 1 && shouldTryAlternateGeminiMode(err)) {
+          console.warn(
+            `[Worker SupportChat] Gemini once (${mode}) failed for key prefix ${cleanKey.slice(0, 4)}...; trying ${modes[i + 1]} mode.`
+          );
+          continue;
+        }
+        if (!shouldTryAlternateGeminiMode(err)) {
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError || new ProviderHttpError('gemini', 503, 'Gemini API request failed.');
 }
 
 const groqModelsCache = new Map<string, { models: string[]; expiresAtMs: number }>();
@@ -1285,13 +1510,19 @@ function jsonResponse(payload: unknown, status = 200): Response {
 
 async function handleHealth(env: CfWorkerEnv, request: Request): Promise<Response> {
   const resolved = await resolveAiConfig(env, request);
-  const isVertexExpress = resolved.provider === 'gemini' && resolved.apiKey.startsWith('AQ.');
+  const cachedGeminiMode = resolved.geminiKey ? geminiModeCache.get(resolved.geminiKey.trim())?.mode : undefined;
+  const endpoint =
+    resolved.provider === 'gemini'
+      ? cachedGeminiMode === 'vertex'
+        ? 'vertex-express'
+        : 'gemini-api'
+      : resolved.provider;
   const model =
     resolved.provider === 'groq'
       ? GROQ_TEXT_MODELS[0]
       : resolved.provider === 'openrouter'
         ? OPENROUTER_MODELS[0]
-        : isVertexExpress
+        : cachedGeminiMode === 'vertex'
           ? VERTEX_EXPRESS_MODELS[0]
           : GEMINI_API_MODELS[0];
 
@@ -1301,15 +1532,12 @@ async function handleHealth(env: CfWorkerEnv, request: Request): Promise<Respons
     runtime: 'cloudflare-worker',
     enabled: resolved.enabled,
     provider: resolved.provider,
-    endpoint:
-      resolved.provider === 'gemini'
-        ? isVertexExpress
-          ? 'vertex-express'
-          : 'gemini-api'
-        : resolved.provider,
+    endpoint,
     model,
     multimodal: true,
-    configured: Boolean(resolved.apiKey),
+    hasGeminiKey: Boolean(resolved.geminiKey),
+    hasGroqKey: Boolean(resolved.groqKey),
+    configured: Boolean(resolved.geminiKey || resolved.groqKey || resolved.openrouterKey),
   });
 }
 
@@ -1470,7 +1698,7 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
     );
   }
 
-  if (!resolved.apiKey) {
+  if (!resolved.apiKey && !resolved.geminiKey && !resolved.groqKey && !resolved.openrouterKey) {
     return jsonResponse(
       {
         error:
@@ -1485,33 +1713,156 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
   const systemInstruction = buildContextualSystemInstruction(body.context);
   const wantsStream = body.stream !== false;
   const { hasImages: requestHasImages, hasPdf: requestHasPdf } = analyzeTurnAttachments(sanitizedTurns);
-  const geminiFallbackKey = getEnvKeyForProvider(env, 'gemini');
+  const envGeminiKey = getEnvKeyForProvider(env, 'gemini');
+  const envGroqKey = getEnvKeyForProvider(env, 'groq');
+  const geminiKeysToTry = [...new Set([resolved.geminiKey, envGeminiKey].map(k => k.trim()).filter(Boolean))];
+  const groqKeysToTry = [...new Set([resolved.groqKey, envGroqKey].map(k => k.trim()).filter(Boolean))];
+  const reqUrl = new URL(request.url);
 
-  const executeGeminiPath = async (geminiKey: string): Promise<Response> => {
+  const executeOpenAiProviderPath = async (
+    targetProvider: 'groq' | 'openrouter',
+    primaryKey: string,
+    allowGeminiPdfFallback = true
+  ): Promise<Response> => {
+    if (requestHasPdf) {
+      if (allowGeminiPdfFallback && geminiKeysToTry.length > 0) {
+        return executeGeminiPath({ allowGroqFallback: false });
+      }
+      return jsonResponse(
+        {
+          error:
+            reqLang === 'en'
+              ? 'PDF document inspection requires a working Google Gemini key. Please attach a screenshot (PNG/JPG) or check your Gemini key in Admin Panel → AI Support Settings.'
+              : 'PDF ফাইল বিশ্লেষণের জন্য সক্রিয় Google Gemini Key প্রয়োজন। অনুগ্রহ করে ফাইলটির স্ক্রিনশট (PNG/JPG ছবি) দিন অথবা অ্যাডমিন প্যানেল থেকে Gemini Key যাচাই করুন।',
+        },
+        422
+      );
+    }
+
+    const keysForCall =
+      targetProvider === 'groq'
+        ? [...new Set([primaryKey, ...groqKeysToTry].map(k => k.trim()).filter(Boolean))]
+        : [primaryKey.trim()].filter(Boolean);
+
+    let upstreamRes: Response | null = null;
+    let lastErr: unknown = null;
+
+    for (let kIdx = 0; kIdx < keysForCall.length; kIdx++) {
+      const keyToUse = keysForCall[kIdx];
+      try {
+        upstreamRes = await callOpenAiCompatibleProvider({
+          provider: targetProvider,
+          apiKey: keyToUse,
+          systemInstruction,
+          turns: sanitizedTurns,
+          stream: wantsStream,
+          originUrl: reqUrl.origin,
+        });
+        break;
+      } catch (err: unknown) {
+        lastErr = err;
+        const errStatus = (err as { status?: number })?.status;
+        const errMsgLower = ((err as { message?: string })?.message || '').toLowerCase();
+        const isInvalidKey =
+          errStatus === 401 || errStatus === 403 || isInvalidAuthKeyError(errStatus, errMsgLower);
+        if (isInvalidKey && kIdx < keysForCall.length - 1) {
+          console.warn(`[Worker SupportChat] Stored ${targetProvider} key rejected; retrying env key.`);
+          continue;
+        }
+        break;
+      }
+    }
+
+    if (!upstreamRes) {
+      if (requestHasImages && isVisionUnsupportedError(lastErr)) {
+        const detail = ((lastErr as { message?: string })?.message || 'Vision model unavailable').trim();
+        return jsonResponse(
+          {
+            error:
+              reqLang === 'en'
+                ? `Your image was received, but neither Gemini nor backup ${targetProvider} vision could inspect it right now (${detail}).`
+                : `আপনার ছবিটি পাওয়া গেছে, কিন্তু এই মুহূর্তে ভিশন মডেল ছবিটি বিশ্লেষণ করতে পারেনি (${detail})। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।`,
+          },
+          422
+        );
+      }
+
+      const mapped = classifyAiError(lastErr, targetProvider, reqLang);
+      return jsonResponse({ error: mapped.message }, mapped.status);
+    }
+
+    if (!wantsStream) {
+      const json = (await upstreamRes.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const rawReply = json.choices?.[0]?.message?.content ?? '';
+      const replyText = sanitizeNoCodeOutput(rawReply) || rawReply;
+      return jsonResponse({ text: replyText });
+    }
+
+    if (!upstreamRes.body) {
+      const mapped = classifyAiError(
+        new ProviderHttpError(targetProvider, 502, 'Empty upstream stream body'),
+        targetProvider,
+        reqLang
+      );
+      return jsonResponse({ error: mapped.message }, mapped.status);
+    }
+
+    return streamOpenAiResponseToClientSse({
+      upstreamBody: upstreamRes.body,
+      provider: targetProvider,
+      reqLang,
+    });
+  };
+
+  const executeGeminiPath = async ({ allowGroqFallback }: { allowGroqFallback: boolean }): Promise<Response> => {
     const contents = buildContentsFromHistory(sanitizedTurns);
     if (contents.length === 0) {
       return jsonResponse({ error: 'No valid message content or supported attachment found.' }, 400);
     }
 
-    const gemini = createGeminiClient(geminiKey);
-
     if (!wantsStream) {
       try {
-        const result = await generateGeminiOnceWithFallback(gemini, systemInstruction, contents);
+        const result = await generateGeminiOnceWithKeys(geminiKeysToTry, systemInstruction, contents);
         const rawReply = result.text ?? '';
         return jsonResponse({ text: sanitizeNoCodeOutput(rawReply) || rawReply });
       } catch (err: unknown) {
+        if (allowGroqFallback && groqKeysToTry.length > 0 && !requestHasPdf) {
+          console.warn(
+            '[Worker SupportChat] Gemini failed on non-stream request; falling back to Groq:',
+            (err as { message?: string })?.message || err
+          );
+          return executeOpenAiProviderPath('groq', groqKeysToTry[0], false);
+        }
         const mapped = classifyAiError(err, 'gemini', reqLang);
-        return jsonResponse({ error: mapped.message }, mapped.status);
+        const msg = requestHasImages
+          ? reqLang === 'en'
+            ? `Your image was received, but Gemini could not inspect it right now: ${mapped.message}`
+            : `আপনার ছবিটি পাওয়া গেছে, কিন্তু Gemini এই মুহূর্তে ছবিটি বিশ্লেষণ করতে পারেনি: ${mapped.message}`
+          : mapped.message;
+        return jsonResponse({ error: msg }, mapped.status);
       }
     }
 
-    let geminiStream: AsyncIterable<{ text?: string }>;
+    let verifiedStream: VerifiedGeminiStream;
     try {
-      geminiStream = await createGeminiStreamWithRetry(gemini, systemInstruction, contents);
+      verifiedStream = await openVerifiedGeminiStreamWithKeys(geminiKeysToTry, systemInstruction, contents);
     } catch (err: unknown) {
+      if (allowGroqFallback && groqKeysToTry.length > 0 && !requestHasPdf) {
+        console.warn(
+          '[Worker SupportChat] Gemini failed before stream output; falling back to Groq:',
+          (err as { message?: string })?.message || err
+        );
+        return executeOpenAiProviderPath('groq', groqKeysToTry[0], false);
+      }
       const mapped = classifyAiError(err, 'gemini', reqLang);
-      return jsonResponse({ error: mapped.message }, mapped.status);
+      const msg = requestHasImages
+        ? reqLang === 'en'
+          ? `Your image was received, but Gemini could not inspect it right now: ${mapped.message}`
+          : `আপনার ছবিটি পাওয়া গেছে, কিন্তু Gemini এই মুহূর্তে ছবিটি বিশ্লেষণ করতে পারেনি: ${mapped.message}`
+        : mapped.message;
+      return jsonResponse({ error: msg }, mapped.status);
     }
 
     const encoder = new TextEncoder();
@@ -1519,8 +1870,16 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         try {
-          for await (const chunk of geminiStream) {
-            const delta = chunk.text;
+          if (verifiedStream.firstChunk?.text) {
+            const filteredFirst = codeFilter.push(verifiedStream.firstChunk.text);
+            if (filteredFirst) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: filteredFirst })}\n\n`));
+            }
+          }
+          while (true) {
+            const step = await verifiedStream.iterator.next();
+            if (step.done) break;
+            const delta = step.value?.text;
             if (delta) {
               const filteredDelta = codeFilter.push(delta);
               if (filteredDelta) {
@@ -1552,100 +1911,20 @@ async function handleSupportChat(request: Request, env: CfWorkerEnv): Promise<Re
     });
   };
 
-  // Groq or OpenRouter execution path
-  if (resolved.provider === 'groq' || resolved.provider === 'openrouter') {
-    // PDFs cannot be parsed natively by Groq/OpenRouter text/image chat endpoints — inspect via Gemini if configured, else report explicitly
-    if (requestHasPdf) {
-      if (geminiFallbackKey) {
-        return executeGeminiPath(geminiFallbackKey);
-      }
-      return jsonResponse(
-        {
-          error:
-            reqLang === 'en'
-              ? 'PDF document inspection is not supported on the active Groq/OpenRouter provider without a Gemini fallback key. Please attach a screenshot (PNG/JPG) or enable Google Gemini in Admin Panel → AI Support Settings.'
-              : 'বর্তমান Groq/OpenRouter প্রোভাইডার সরাসরি PDF ফাইল বিশ্লেষণ করতে পারে না। অনুগ্রহ করে ফাইলটির স্ক্রিনশট (PNG/JPG ছবি) দিন অথবা অ্যাডমিন প্যানেল থেকে Google Gemini চালু করুন।',
-        },
-        422
-      );
-    }
-
-    const reqUrl = new URL(request.url);
-    const runOpenAiCompatible = (keyToUse: string) =>
-      callOpenAiCompatibleProvider({
-        provider: resolved.provider as 'groq' | 'openrouter',
-        apiKey: keyToUse,
-        systemInstruction,
-        turns: sanitizedTurns,
-        stream: wantsStream,
-        originUrl: reqUrl.origin,
-      });
-
-    try {
-      let upstreamRes: Response;
-      try {
-        upstreamRes = await runOpenAiCompatible(resolved.apiKey);
-      } catch (primaryErr: unknown) {
-        const fallbackGroqKey = getEnvKeyForProvider(env, 'groq');
-        const primaryStatus = (primaryErr as { status?: number })?.status;
-        const primaryMsgLower = ((primaryErr as { message?: string })?.message || '').toLowerCase();
-        const isInvalidGroqKey =
-          resolved.provider === 'groq' &&
-          Boolean(fallbackGroqKey) &&
-          fallbackGroqKey !== resolved.apiKey.trim() &&
-          (primaryStatus === 401 ||
-            primaryStatus === 403 ||
-            isInvalidAuthKeyError(primaryStatus, primaryMsgLower));
-
-        if (!isInvalidGroqKey) {
-          throw primaryErr;
-        }
-        console.warn('[Worker SupportChat] Stored Groq key rejected; falling back to env.GROQ_API_KEY.');
-        upstreamRes = await runOpenAiCompatible(fallbackGroqKey);
-      }
-
-      if (!wantsStream) {
-        const json = (await upstreamRes.json()) as {
-          choices?: Array<{ message?: { content?: string } }>;
-        };
-        const rawReply = json.choices?.[0]?.message?.content ?? '';
-        const replyText = sanitizeNoCodeOutput(rawReply) || rawReply;
-        return jsonResponse({ text: replyText });
-      }
-
-      if (!upstreamRes.body) {
-        throw new ProviderHttpError(resolved.provider, 502, 'Empty upstream stream body');
-      }
-
-      return streamOpenAiResponseToClientSse({
-        upstreamBody: upstreamRes.body,
-        provider: resolved.provider,
-        reqLang,
-      });
-    } catch (err: unknown) {
-      if (requestHasImages && isVisionUnsupportedError(err)) {
-        if (geminiFallbackKey) {
-          return executeGeminiPath(geminiFallbackKey);
-        }
-        const detail = ((err as { message?: string })?.message || 'Vision model unavailable').trim();
-        return jsonResponse(
-          {
-            error:
-              reqLang === 'en'
-                ? `Image inspection could not run because the active ${resolved.provider} vision model is unavailable or unsupported right now (${detail}).`
-                : `বর্তমান ${resolved.provider} ভিশন মডেলটি এই মুহূর্তে ছবি বিশ্লেষণ করতে পারেনি (${detail})।`,
-          },
-          422
-        );
-      }
-
-      const mapped = classifyAiError(err, resolved.provider, reqLang);
-      return jsonResponse({ error: mapped.message }, mapped.status);
-    }
+  // Prioritize Gemini (AIza... and AQ...) whenever a Gemini key is configured, with automatic Groq backup
+  if (geminiKeysToTry.length > 0 && (resolved.provider !== 'openrouter' || requestHasImages || requestHasPdf)) {
+    return executeGeminiPath({ allowGroqFallback: true });
   }
 
-  // Google Gemini execution path (default)
-  return executeGeminiPath(resolved.apiKey);
+  if (resolved.provider === 'openrouter' && resolved.openrouterKey) {
+    return executeOpenAiProviderPath('openrouter', resolved.openrouterKey, true);
+  }
+
+  if (groqKeysToTry.length > 0) {
+    return executeOpenAiProviderPath('groq', groqKeysToTry[0], true);
+  }
+
+  return executeOpenAiProviderPath('openrouter', resolved.openrouterKey || resolved.apiKey, true);
 }
 
 const SUPPORT_CHAT_PATHS = new Set(['/api/support-chat', '/api/chat', '/support-chat']);

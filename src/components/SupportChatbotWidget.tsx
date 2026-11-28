@@ -96,6 +96,44 @@ function inferMimeTypeFromFile(file: File): string {
   return '';
 }
 
+async function detectMimeTypeWithMagicBytes(file: File): Promise<string> {
+  const fromMetadata = inferMimeTypeFromFile(file);
+  if (fromMetadata) {
+    return fromMetadata;
+  }
+  try {
+    const headerBuf = await file.slice(0, 16).arrayBuffer();
+    const bytes = new Uint8Array(headerBuf);
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return 'image/jpeg';
+    }
+    if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+      return 'image/png';
+    }
+    if (bytes.length >= 4 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) {
+      return 'image/gif';
+    }
+    if (
+      bytes.length >= 12 &&
+      bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+      bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+    ) {
+      return 'image/webp';
+    }
+    if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d) {
+      return 'application/pdf';
+    }
+    if (bytes.length >= 12 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
+      const brand = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]).toLowerCase();
+      if (brand === 'avif') return 'image/avif';
+      if (brand === 'heic' || brand === 'heix' || brand === 'mif1' || brand === 'msf1') return 'image/heic';
+    }
+  } catch {
+    // Ignore slice read failures
+  }
+  return '';
+}
+
 function formatTime(): string {
   return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -116,15 +154,19 @@ function readFileAsBase64(file: File): Promise<{ base64: string; dataUrl: string
         reject(new Error('Invalid file encoding.'));
         return;
       }
+      const cleanBase64 = result.slice(commaIndex + 1).replace(/\s+/g, '');
+      const prefix = result.slice(0, commaIndex + 1);
       resolve({
-        dataUrl: result,
-        base64: result.slice(commaIndex + 1)
+        dataUrl: `${prefix}${cleanBase64}`,
+        base64: cleanBase64
       });
     };
     reader.onerror = () => reject(new Error('Failed to read attached file.'));
     reader.readAsDataURL(file);
   });
 }
+
+const MAX_ATTACHMENT_BASE64_CHARS = 2_800_000;
 
 async function compressImageIfNeeded(
   file: File,
@@ -138,7 +180,11 @@ async function compressImageIfNeeded(
     : '';
 
   // Keep smaller standard PNG/JPG/WEBP/GIF images untouched for crisp OCR of TrxIDs/text
-  if (safeStandardMime && (safeStandardMime === 'image/gif' || file.size <= 700 * 1024)) {
+  if (
+    safeStandardMime &&
+    base64.length <= MAX_ATTACHMENT_BASE64_CHARS &&
+    (safeStandardMime === 'image/gif' || file.size <= 700 * 1024)
+  ) {
     return {
       base64,
       dataUrl,
@@ -149,37 +195,58 @@ async function compressImageIfNeeded(
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const maxDim = 1400;
-      let { width, height } = img;
-      if (width > maxDim || height > maxDim) {
-        const scale = Math.min(maxDim / width, maxDim / height);
-        width = Math.max(1, Math.round(width * scale));
-        height = Math.max(1, Math.round(height * scale));
+      const encodeAt = (maxDim: number, quality: number) => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = Math.min(maxDim / width, maxDim / height);
+          width = Math.max(1, Math.round(width * scale));
+          height = Math.max(1, Math.round(height * scale));
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressedUrl = canvas.toDataURL('image/jpeg', quality);
+        const idx = compressedUrl.indexOf(',');
+        const outBase64 = (idx !== -1 ? compressedUrl.slice(idx + 1) : base64).replace(/\s+/g, '');
+        return {
+          dataUrl: compressedUrl,
+          base64: outBase64,
+          mimeType: 'image/jpeg'
+        };
+      };
+
+      const attempts: Array<[number, number]> = [
+        [1400, 0.82],
+        [1150, 0.72],
+        [900, 0.6],
+      ];
+
+      let best: { dataUrl: string; base64: string; mimeType: string } | null = null;
+      for (const [dim, q] of attempts) {
+        const encoded = encodeAt(dim, q);
+        if (!encoded) break;
+        best = encoded;
+        if (encoded.base64.length <= MAX_ATTACHMENT_BASE64_CHARS) {
+          resolve(encoded);
+          return;
+        }
       }
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        if (safeStandardMime) {
-          resolve({ base64, dataUrl, mimeType: safeStandardMime });
-        } else {
-          reject(new Error('Canvas unavailable'));
-        }
-        return;
+      if (best) {
+        resolve(best);
+      } else if (safeStandardMime && base64.length <= MAX_ATTACHMENT_BASE64_CHARS) {
+        resolve({ base64, dataUrl, mimeType: safeStandardMime });
+      } else {
+        reject(new Error('Canvas unavailable or image too large'));
       }
-      ctx.drawImage(img, 0, 0, width, height);
-      const compressedUrl = canvas.toDataURL('image/jpeg', 0.82);
-      const idx = compressedUrl.indexOf(',');
-      resolve({
-        dataUrl: compressedUrl,
-        base64: idx !== -1 ? compressedUrl.slice(idx + 1) : base64,
-        mimeType: 'image/jpeg'
-      });
     };
     img.onerror = () => {
-      if (safeStandardMime) {
+      if (safeStandardMime && base64.length <= MAX_ATTACHMENT_BASE64_CHARS) {
         resolve({ base64, dataUrl, mimeType: safeStandardMime });
       } else {
         reject(new Error('Unsupported image format'));
@@ -255,6 +322,8 @@ function FormattedMessageBody({ text, isUser, isBn }: { text: string; isUser: bo
   // Strip any accidental raw code blocks (including in-progress blocks while streaming)
   const cleanedText = text
     .replace(/```[\s\S]*?(?:```|$)/g, '')
+    .replace(/~~~[\s\S]*?(?:~~~|$)/g, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
@@ -283,7 +352,9 @@ function BrandMLogoMark({ className = 'w-4 h-4' }: { className?: string }) {
 
 function cleanTextForSpeech(rawText: string): string {
   return rawText
-    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/```[\s\S]*?(?:```|$)/g, ' ')
+    .replace(/~~~[\s\S]*?(?:~~~|$)/g, ' ')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/^#{1,6}\s+/gm, '')
@@ -554,13 +625,14 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
     const nextAttachments: ChatAttachment[] = [];
 
     for (const file of files.slice(0, availableSlots)) {
-      const normalizedType = inferMimeTypeFromFile(file);
+      const normalizedType = await detectMimeTypeWithMagicBytes(file);
+      const displayFileName = file.name?.trim() || `attachment-${Date.now()}`;
 
       if (!SUPPORTED_MIME_TYPES.has(normalizedType)) {
         setAttachmentError(
           isBn
-            ? `"${file.name}" সাপোর্টেড নয়। ছবি (PNG/JPG/WEBP), PDF অথবা TXT/CSV ফাইল দিন।`
-            : `"${file.name}" is unsupported. Please attach PNG/JPG/WEBP images, PDF, or TXT/CSV files.`
+            ? `"${displayFileName}" সাপোর্টেড নয়। ছবি (PNG/JPG/WEBP), PDF অথবা TXT/CSV ফাইল দিন।`
+            : `"${displayFileName}" is unsupported. Please attach PNG/JPG/WEBP images, PDF, or TXT/CSV files.`
         );
         continue;
       }
@@ -568,8 +640,8 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
       if (file.size > MAX_RAW_FILE_BYTES) {
         setAttachmentError(
           isBn
-            ? `"${file.name}" ৮ MB-এর বেশি। অনুগ্রহ করে অপেক্ষাকৃত ছোট ফাইল দিন।`
-            : `"${file.name}" exceeds 8 MB limit.`
+            ? `"${displayFileName}" ৮ MB-এর বেশি। অনুগ্রহ করে অপেক্ষাকৃত ছোট ফাইল দিন।`
+            : `"${displayFileName}" exceeds 8 MB limit.`
         );
         continue;
       }
@@ -579,7 +651,7 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
           const compressed = await compressImageIfNeeded(file, normalizedType);
           nextAttachments.push({
             id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            name: file.name,
+            name: displayFileName,
             mimeType: compressed.mimeType,
             data: compressed.base64,
             previewUrl: compressed.dataUrl,
@@ -589,7 +661,7 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
           const read = await readFileAsBase64(file);
           nextAttachments.push({
             id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            name: file.name,
+            name: displayFileName,
             mimeType: normalizedType,
             data: read.base64,
             sizeLabel: formatBytes(file.size)
@@ -598,8 +670,8 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
       } catch {
         setAttachmentError(
           isBn
-            ? `"${file.name}" ছবিটি প্রসেস করা যায়নি। অনুগ্রহ করে PNG বা JPG ছবি দিন।`
-            : `Failed to process "${file.name}". Please try a PNG or JPG image.`
+            ? `"${displayFileName}" ছবিটি প্রসেস করা যায়নি। অনুগ্রহ করে PNG বা JPG ছবি দিন।`
+            : `Failed to process "${displayFileName}". Please try a PNG or JPG image.`
         );
       }
     }
@@ -927,8 +999,8 @@ const SupportChatbotWidgetInner: React.FC<SupportChatbotWidgetProps> = ({
         if (res.status === 503) {
           throw new Error(
             isBn
-              ? 'AI সাপোর্ট সার্ভিস সাময়িকভাবে অনুপলব্ধ। অ্যাপ সেটিংসে GEMINI_API_KEY সেট করা আছে কিনা যাচাই করুন অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।'
-              : 'AI Support service is temporarily unavailable. Please check that GEMINI_API_KEY is configured in Settings > Secrets or try again shortly.'
+              ? 'AI সাপোর্ট সার্ভিস সাময়িকভাবে অনুপলব্ধ। অ্যাডমিন প্যানেল → AI Support Settings বা Secrets-এ API Key যাচাই করুন অথবা কিছুক্ষণ পর আবার চেষ্টা করুন।'
+              : 'AI Support service is temporarily unavailable. Please check your API keys in Admin Panel → AI Support Settings or Secrets and try again shortly.'
           );
         }
         throw new Error(

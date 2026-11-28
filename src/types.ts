@@ -255,6 +255,9 @@ export interface AiSupportAdminConfig {
   enabled: boolean;
   provider: AiSupportProvider;
   apiKey: string;
+  geminiApiKey?: string;
+  groqApiKey?: string;
+  openrouterApiKey?: string;
   updatedBy?: string;
   updatedAtMs?: number;
 }

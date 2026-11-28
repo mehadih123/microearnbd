@@ -163,11 +163,30 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
   const [aiSavedStatus, setAiSavedStatus] = useState<AiSupportAdminConfig>(DEFAULT_AI_SUPPORT_CONFIG);
   const [aiEnabledDraft, setAiEnabledDraft] = useState<boolean>(true);
   const [aiProviderDraft, setAiProviderDraft] = useState<AiSupportProvider>('gemini');
-  const [aiApiKeyDraft, setAiApiKeyDraft] = useState<string>('');
+  const [aiGeminiKeyDraft, setAiGeminiKeyDraft] = useState<string>('');
+  const [aiGroqKeyDraft, setAiGroqKeyDraft] = useState<string>('');
+  const [aiOpenRouterKeyDraft, setAiOpenRouterKeyDraft] = useState<string>('');
   const [showAiApiKey, setShowAiApiKey] = useState<boolean>(false);
   const [isLoadingAiSettings, setIsLoadingAiSettings] = useState<boolean>(false);
   const [isSavingAiSettings, setIsSavingAiSettings] = useState<boolean>(false);
   const [aiNotice, setAiNotice] = useState<{ text: string; isError: boolean } | null>(null);
+
+  const aiApiKeyDraft =
+    aiProviderDraft === 'groq'
+      ? aiGroqKeyDraft
+      : aiProviderDraft === 'openrouter'
+        ? aiOpenRouterKeyDraft
+        : aiGeminiKeyDraft;
+
+  const setActiveAiApiKeyDraft = (nextVal: string) => {
+    if (aiProviderDraft === 'groq') {
+      setAiGroqKeyDraft(nextVal);
+    } else if (aiProviderDraft === 'openrouter') {
+      setAiOpenRouterKeyDraft(nextVal);
+    } else {
+      setAiGeminiKeyDraft(nextVal);
+    }
+  };
 
   // Ads Manager (siteSettings/adsConfig) Form State
   const [adsEnabledDraft, setAdsEnabledDraft] = useState<boolean>(adsConfig.adsEnabled);
@@ -364,7 +383,11 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
         setAiSavedStatus(cfg);
         setAiEnabledDraft(Boolean(cfg.enabled));
         setAiProviderDraft(cfg.provider);
-        setAiApiKeyDraft(cfg.apiKey || '');
+        setAiGeminiKeyDraft(cfg.geminiApiKey || (cfg.provider === 'gemini' ? cfg.apiKey || '' : ''));
+        setAiGroqKeyDraft(cfg.groqApiKey || (cfg.provider === 'groq' ? cfg.apiKey || '' : ''));
+        setAiOpenRouterKeyDraft(
+          cfg.openrouterApiKey || (cfg.provider === 'openrouter' ? cfg.apiKey || '' : '')
+        );
       })
       .catch(() => {
         // Keep defaults on transient fetch error
@@ -381,11 +404,20 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
     if (e) e.preventDefault();
     setAiNotice(null);
 
-    const trimmedKey = aiApiKeyDraft.trim();
-    if (aiEnabledDraft && !trimmedKey) {
+    const trimmedGemini = aiGeminiKeyDraft.trim();
+    const trimmedGroq = aiGroqKeyDraft.trim();
+    const trimmedOpenRouter = aiOpenRouterKeyDraft.trim();
+    const trimmedActive =
+      aiProviderDraft === 'groq'
+        ? trimmedGroq || trimmedGemini
+        : aiProviderDraft === 'openrouter'
+          ? trimmedOpenRouter || trimmedGemini
+          : trimmedGemini || trimmedGroq;
+
+    if (aiEnabledDraft && !trimmedActive) {
       playSound('error');
       setAiNotice({
-        text: 'অনুগ্রহ করে নির্বাচিত প্রোভাইডারের বৈধ API Key দিন অথবা চ্যাটবট সাময়িকভাবে বন্ধ (OFF) রেখে সেভ করুন। / Please enter an API key for the selected provider or disable AI Support before saving.',
+        text: 'অনুগ্রহ করে অন্তত Gemini (AIzaSy.../AQ...) অথবা Groq API Key দিন কিংবা চ্যাটবট সাময়িকভাবে বন্ধ (OFF) রেখে সেভ করুন। / Please enter a Gemini or Groq API key or disable AI Support before saving.',
         isError: true
       });
       return;
@@ -396,14 +428,19 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
       const saved = await saveAiSupportConfigToFirestore({
         enabled: aiEnabledDraft,
         provider: aiProviderDraft,
-        apiKey: trimmedKey
+        apiKey: trimmedActive,
+        geminiApiKey: trimmedGemini,
+        groqApiKey: trimmedGroq,
+        openrouterApiKey: trimmedOpenRouter
       });
       setAiSavedStatus(saved);
-      setAiApiKeyDraft(saved.apiKey);
+      setAiGeminiKeyDraft(saved.geminiApiKey || '');
+      setAiGroqKeyDraft(saved.groqApiKey || '');
+      setAiOpenRouterKeyDraft(saved.openrouterApiKey || '');
       playSound('success');
       setAiNotice({
         text: saved.enabled
-          ? 'AI সাপোর্ট সেটিংস সফলভাবে সুরক্ষিত Firestore-এ সেভ হয়েছে! / AI Support settings saved securely to admin-only Firestore!'
+          ? 'AI সাপোর্ট সেটিংস (Gemini ও Groq ব্যাকআপ Key সহ) সুরক্ষিত Firestore-এ সেভ হয়েছে! / AI Support settings saved securely to admin-only Firestore!'
           : 'অ্যাডমিন দ্বারা MicroEarn BD AI Support বন্ধ করে সেভ করা হয়েছে। / MicroEarn BD AI Support disabled and saved!',
         isError: false
       });
@@ -5210,7 +5247,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     }}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-700 focus:border-cyan-500 text-xs sm:text-sm font-bold text-white outline-none cursor-pointer"
                   >
-                    <option value="gemini">Google Gemini (AIzaSy...)</option>
+                    <option value="gemini">Google Gemini (AIzaSy... / AQ...)</option>
                     <option value="groq">Groq (Free Fast API)</option>
                     <option value="openrouter">OpenRouter (Free Models)</option>
                   </select>
@@ -5220,14 +5257,14 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between gap-2">
                     <label className="block text-xs font-semibold text-slate-300">
-                      API Key ({aiProviderDraft === 'gemini' ? 'Google Gemini' : aiProviderDraft === 'groq' ? 'Groq' : 'OpenRouter'})
+                      API Key ({aiProviderDraft === 'gemini' ? 'Google Gemini — Primary' : aiProviderDraft === 'groq' ? 'Groq' : 'OpenRouter'})
                     </label>
                     {aiApiKeyDraft.trim() && (
                       <button
                         type="button"
                         onClick={() => {
                           playSound('click');
-                          setAiApiKeyDraft('');
+                          setActiveAiApiKeyDraft('');
                           setAiNotice(null);
                         }}
                         className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 cursor-pointer"
@@ -5243,7 +5280,7 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                       type={showAiApiKey ? 'text' : 'password'}
                       value={aiApiKeyDraft}
                       onChange={e => {
-                        setAiApiKeyDraft(e.target.value);
+                        setActiveAiApiKeyDraft(e.target.value);
                         if (aiNotice) setAiNotice(null);
                       }}
                       autoComplete="off"
@@ -5272,8 +5309,54 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                     </button>
                   </div>
 
-                  <p className="text-[11px] text-slate-400 leading-relaxed">
-                    নিরাপত্তা নোট: এই API Key-টি শুধুমাত্র অ্যাডমিন-লকড <span className="font-mono text-cyan-300">admin_secrets/ai_support</span> ডকুমেন্টে সংরক্ষিত থাকে—সাধারণ ইউজার বা পাবলিক ব্রাউজার এটি পড়তে পারবে না।
+                  {/* Secondary Preserved Backup Key Input (Groq backup when Gemini selected, or Gemini primary when Groq/OpenRouter selected) */}
+                  <div className="pt-2 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="block text-[11px] font-semibold text-slate-400">
+                        {aiProviderDraft === 'gemini'
+                          ? 'Groq Backup API Key (Gemini ব্যস্ত বা লিমিট শেষ হলে অটো-ব্যাকআপ)'
+                          : 'Google Gemini API Key (ছবি/ভিশন ও প্রাইমারি প্রোভাইডার)'}
+                      </label>
+                      {(aiProviderDraft === 'gemini' ? aiGroqKeyDraft : aiGeminiKeyDraft).trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            playSound('click');
+                            if (aiProviderDraft === 'gemini') {
+                              setAiGroqKeyDraft('');
+                            } else {
+                              setAiGeminiKeyDraft('');
+                            }
+                            setAiNotice(null);
+                          }}
+                          className="text-[11px] text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Clear</span>
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type={showAiApiKey ? 'text' : 'password'}
+                      value={aiProviderDraft === 'gemini' ? aiGroqKeyDraft : aiGeminiKeyDraft}
+                      onChange={e => {
+                        if (aiProviderDraft === 'gemini') {
+                          setAiGroqKeyDraft(e.target.value);
+                        } else {
+                          setAiGeminiKeyDraft(e.target.value);
+                        }
+                        if (aiNotice) setAiNotice(null);
+                      }}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={256}
+                      placeholder={aiProviderDraft === 'gemini' ? 'gsk_... (ঐচ্ছিক ব্যাকআপ)' : 'AIzaSy... বা AQ... (ঐচ্ছিক)'}
+                      className="w-full px-3.5 py-2 rounded-xl bg-slate-900/80 border border-slate-700/80 focus:border-cyan-500 text-xs font-mono text-slate-200 outline-none"
+                    />
+                  </div>
+
+                  <p className="text-[11px] text-slate-400 leading-relaxed pt-1">
+                    নিরাপত্তা নোট: এই API Key-গুলো শুধুমাত্র অ্যাডমিন-লকড <span className="font-mono text-cyan-300">admin_secrets/ai_support</span> ডকুমেন্টে সংরক্ষিত থাকে—Gemini ও Groq দুটোই একসাথে সেভ রাখা যায় এবং সাধারণ ইউজার বা পাবলিক ব্রাউজার এটি পড়তে পারবে না।
                   </p>
                 </div>
               </div>
@@ -5307,9 +5390,13 @@ export const AdminDashboardModal: React.FC<AdminDashboardModalProps> = ({
                   Provider:{' '}
                   <strong className="text-cyan-400 uppercase">{aiSavedStatus.provider}</strong>
                   {' · '}
-                  Key:{' '}
-                  <strong className={aiSavedStatus.apiKey ? 'text-emerald-400' : 'text-amber-400'}>
-                    {aiSavedStatus.apiKey ? 'Saved in Firestore' : 'Env Fallback'}
+                  Keys:{' '}
+                  <strong className={aiSavedStatus.geminiApiKey || aiSavedStatus.groqApiKey || aiSavedStatus.apiKey ? 'text-emerald-400' : 'text-amber-400'}>
+                    {aiSavedStatus.geminiApiKey || aiSavedStatus.groqApiKey
+                      ? `Gemini ${aiSavedStatus.geminiApiKey ? '✓' : '—'} · Groq ${aiSavedStatus.groqApiKey ? '✓' : '—'}`
+                      : aiSavedStatus.apiKey
+                        ? 'Saved in Firestore'
+                        : 'Env Fallback'}
                   </strong>
                 </div>
 

@@ -1963,6 +1963,90 @@ export function sanitizeAiProvider(raw: unknown): AiSupportProvider {
   return 'gemini';
 }
 
+export function inferAiProviderFromKey(key: string): AiSupportProvider | null {
+  const trimmed = key.trim();
+  if (!trimmed) return null;
+  if (/^(?:AIza|AQ)/i.test(trimmed)) return 'gemini';
+  if (/^gsk_/i.test(trimmed)) return 'groq';
+  if (/^sk-or-/i.test(trimmed)) return 'openrouter';
+  return null;
+}
+
+export function unpackAiSupportKeys(
+  rawApiKey: string,
+  fallbackProvider: AiSupportProvider
+): { geminiApiKey: string; groqApiKey: string; openrouterApiKey: string } {
+  const trimmed = (rawApiKey || '').trim();
+  const result = { geminiApiKey: '', groqApiKey: '', openrouterApiKey: '' };
+  if (!trimmed) return result;
+
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as {
+        gemini?: unknown;
+        groq?: unknown;
+        openrouter?: unknown;
+        g?: unknown;
+        q?: unknown;
+        o?: unknown;
+      };
+      result.geminiApiKey = typeof (parsed.gemini ?? parsed.g) === 'string' ? String(parsed.gemini ?? parsed.g).trim() : '';
+      result.groqApiKey = typeof (parsed.groq ?? parsed.q) === 'string' ? String(parsed.groq ?? parsed.q).trim() : '';
+      result.openrouterApiKey = typeof (parsed.openrouter ?? parsed.o) === 'string' ? String(parsed.openrouter ?? parsed.o).trim() : '';
+      return result;
+    } catch {
+      // Treat malformed JSON as literal key string
+    }
+  }
+
+  const inferred = inferAiProviderFromKey(trimmed) || fallbackProvider;
+  if (inferred === 'groq') {
+    result.groqApiKey = trimmed;
+  } else if (inferred === 'openrouter') {
+    result.openrouterApiKey = trimmed;
+  } else {
+    result.geminiApiKey = trimmed;
+  }
+  return result;
+}
+
+export function packAiSupportKeys(
+  provider: AiSupportProvider,
+  keys: { geminiApiKey?: string; groqApiKey?: string; openrouterApiKey?: string }
+): string {
+  const gemini = (keys.geminiApiKey || '').trim();
+  const groq = (keys.groqApiKey || '').trim();
+  const openrouter = (keys.openrouterApiKey || '').trim();
+
+  if (!gemini && !groq && !openrouter) return '';
+  if (gemini && !groq && !openrouter && provider === 'gemini') return gemini.slice(0, 512);
+  if (groq && !gemini && !openrouter && provider === 'groq') return groq.slice(0, 512);
+  if (openrouter && !gemini && !groq && provider === 'openrouter') return openrouter.slice(0, 512);
+
+  const payload: Record<string, string> = {};
+  if (gemini) payload.gemini = gemini;
+  if (groq) payload.groq = groq;
+  if (openrouter) payload.openrouter = openrouter;
+
+  const encoded = JSON.stringify(payload);
+  if (encoded.length <= 512) return encoded;
+
+  // Keep under Firestore 512-byte limit while prioritizing Gemini + Groq backup
+  const priorityPayload: Record<string, string> = {};
+  if (gemini) priorityPayload.gemini = gemini;
+  if (groq) priorityPayload.groq = groq;
+  const priorityEncoded = JSON.stringify(priorityPayload);
+  if (priorityEncoded.length <= 512) return priorityEncoded;
+
+  const activeSingle =
+    provider === 'groq'
+      ? groq || gemini || openrouter
+      : provider === 'openrouter'
+        ? openrouter || gemini || groq
+        : gemini || groq || openrouter;
+  return activeSingle.slice(0, 512);
+}
+
 export async function getAiSupportConfigFromFirestore(): Promise<AiSupportAdminConfig> {
   if (!isAuthorizedAdminUser()) {
     return DEFAULT_AI_SUPPORT_CONFIG;
@@ -1972,10 +2056,22 @@ export async function getAiSupportConfigFromFirestore(): Promise<AiSupportAdminC
     const snap = await getDocWithOfflineRetry(secretRef);
     if (snap.exists()) {
       const data = snap.data();
+      const provider = sanitizeAiProvider(data.provider);
+      const rawKey = typeof data.apiKey === 'string' ? data.apiKey.slice(0, 512) : '';
+      const unpacked = unpackAiSupportKeys(rawKey, provider);
+      const activeKey =
+        provider === 'groq'
+          ? unpacked.groqApiKey || unpacked.geminiApiKey
+          : provider === 'openrouter'
+            ? unpacked.openrouterApiKey || unpacked.geminiApiKey
+            : unpacked.geminiApiKey || unpacked.groqApiKey;
       return {
         enabled: typeof data.enabled === 'boolean' ? data.enabled : true,
-        provider: sanitizeAiProvider(data.provider),
-        apiKey: typeof data.apiKey === 'string' ? data.apiKey.slice(0, 512) : '',
+        provider,
+        apiKey: activeKey,
+        geminiApiKey: unpacked.geminiApiKey,
+        groqApiKey: unpacked.groqApiKey,
+        openrouterApiKey: unpacked.openrouterApiKey,
         updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
         updatedAtMs:
           typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined
@@ -1993,6 +2089,9 @@ export async function getAiSupportConfigFromFirestore(): Promise<AiSupportAdminC
         enabled: typeof data.enabled === 'boolean' ? data.enabled : true,
         provider: sanitizeAiProvider(data.provider),
         apiKey: '',
+        geminiApiKey: '',
+        groqApiKey: '',
+        openrouterApiKey: '',
         updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
         updatedAtMs:
           typeof data.updatedAt?.toMillis === 'function' ? data.updatedAt.toMillis() : undefined
@@ -2010,7 +2109,31 @@ export async function saveAiSupportConfigToFirestore(
 ): Promise<AiSupportAdminConfig> {
   const adminUser = assertAuthorizedAdmin();
   const cleanProvider = sanitizeAiProvider(config.provider);
-  const cleanApiKey = (config.apiKey || '').trim().slice(0, 512);
+  const directKey = (config.apiKey || '').trim();
+  const unpackedFallback = unpackAiSupportKeys(directKey, cleanProvider);
+
+  const geminiKey = (
+    config.geminiApiKey !== undefined ? config.geminiApiKey : unpackedFallback.geminiApiKey
+  ).trim();
+  const groqKey = (
+    config.groqApiKey !== undefined ? config.groqApiKey : unpackedFallback.groqApiKey
+  ).trim();
+  const openrouterKey = (
+    config.openrouterApiKey !== undefined ? config.openrouterApiKey : unpackedFallback.openrouterApiKey
+  ).trim();
+
+  const packedApiKey = packAiSupportKeys(cleanProvider, {
+    geminiApiKey: geminiKey,
+    groqApiKey: groqKey,
+    openrouterApiKey: openrouterKey
+  });
+  const activeKey =
+    cleanProvider === 'groq'
+      ? groqKey || geminiKey
+      : cleanProvider === 'openrouter'
+        ? openrouterKey || geminiKey
+        : geminiKey || groqKey;
+
   const cleanEnabled = Boolean(config.enabled);
   const adminUid = sanitizeId(adminUser.uid);
 
@@ -2019,7 +2142,7 @@ export async function saveAiSupportConfigToFirestore(
     id: 'ai_support',
     enabled: cleanEnabled,
     provider: cleanProvider,
-    apiKey: cleanApiKey,
+    apiKey: packedApiKey,
     updatedBy: adminUid,
     updatedAt: serverTimestamp()
   });
@@ -2027,7 +2150,7 @@ export async function saveAiSupportConfigToFirestore(
     id: 'aiStatus',
     enabled: cleanEnabled,
     provider: cleanProvider,
-    hasKey: Boolean(cleanApiKey),
+    hasKey: Boolean(packedApiKey),
     updatedBy: adminUid,
     updatedAt: serverTimestamp()
   });
@@ -2037,7 +2160,10 @@ export async function saveAiSupportConfigToFirestore(
     return {
       enabled: cleanEnabled,
       provider: cleanProvider,
-      apiKey: cleanApiKey,
+      apiKey: activeKey,
+      geminiApiKey: geminiKey,
+      groqApiKey: groqKey,
+      openrouterApiKey: openrouterKey,
       updatedBy: adminUid,
       updatedAtMs: Date.now()
     };
